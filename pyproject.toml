@@ -1,0 +1,121 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sharedimp"
+dynamic = ["version"]
+description = "Cross-validated UMFI-LR (ultra-marginal feature importance with linear residualization) for scikit-learn workflows"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [{ name = "Koki Tsuyuzaki" }]
+keywords = [
+    "feature importance",
+    "UMFI",
+    "ultra-marginal feature importance",
+    "scikit-learn",
+    "machine learning",
+    "interpretability",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+    "Typing :: Typed",
+]
+dependencies = [
+    "numpy>=1.23",
+    "scipy>=1.9",
+    "pandas>=1.5",
+    "scikit-learn>=1.3",
+    "joblib>=1.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+    "ruff>=0.6",
+    "mypy>=1.8",
+    "build>=1.0",
+    "twine>=5.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/dsc-chiba-u/sharedimp-py"
+Repository = "https://github.com/dsc-chiba-u/sharedimp-py"
+Issues = "https://github.com/dsc-chiba-u/sharedimp-py/issues"
+Changelog = "https://github.com/dsc-chiba-u/sharedimp-py/blob/main/CHANGELOG.md"
+
+[tool.hatch.version]
+path = "src/sharedimp/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sharedimp"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+    "/docs",
+    "/examples",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/LICENSE",
+    "/CITATION.cff",
+    "/pyproject.toml",
+]
+
+[tool.pytest.ini_options]
+minversion = "7.4"
+testpaths = ["tests", "src"]
+addopts = "-ra --strict-markers --doctest-modules"
+markers = [
+    "parity: compares against the official UMFI implementation (downloads pinned upstream sources; needs network)",
+]
+filterwarnings = ["error::FutureWarning:sharedimp.*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "NPY", "D", "RUF"]
+ignore = [
+    "D105", # magic method docstrings
+    "D107", # __init__ docstrings (documented on the class)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D"]
+"examples/*" = ["D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.mypy]
+python_version = "3.10"
+files = ["src/sharedimp"]
+warn_unused_ignores = true
+warn_redundant_casts = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+
+[[tool.mypy.overrides]]
+module = ["sklearn.*", "joblib.*", "scipy.*", "pandas.*"]
+ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["sharedimp"]
+branch = true

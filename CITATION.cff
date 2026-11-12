@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the UMFI paper listed under preferred-citation."
+title: "sharedimp: cross-validated UMFI-LR feature importance for scikit-learn workflows"
+type: software
+version: 0.1.0
+date-released: 2026-11-12
+license: MIT
+repository-code: "https://github.com/dsc-chiba-u/sharedimp-py"
+authors:
+  - family-names: Tsuyuzaki
+    given-names: Koki
+preferred-citation:
+  type: conference-paper
+  title: "Ultra-marginal Feature Importance: Learning from Data with Causal Guarantees"
+  authors:
+    - family-names: Janssen
+      given-names: Joseph
+    - family-names: Guan
+      given-names: Vincent
+    - family-names: Robeva
+      given-names: Elina
+  collection-title: "Proceedings of The 26th International Conference on Artificial Intelligence and Statistics"
+  volume: 206
+  start: 10782
+  end: 10814
+  year: 2023
+  publisher:
+    name: PMLR
+  url: "https://proceedings.mlr.press/v206/janssen23a.html"

@@ -49,10 +49,16 @@ def main() -> int:
         "score_reduced",
         "n_splits",
     ]
-    assert linear.fold_results.shape == (5 * 4, 7)
+    assert linear.fold_results.shape == (5 * 4, 8)
+    assert linear.n_failed == 0
     assert np.all(np.isfinite(imp))
     assert imp[0] > 0.5 and imp[2] > 0.5, "informative features must be important"
     assert abs(imp[3]) < 0.1, "the noise feature must be unimportant"
+
+    # Default metric: mean squared error for regressors (as a negated loss).
+    default = shared_importance(LinearRegression(), X, y, cv=5, random_state=0)
+    assert default.scoring == "neg_mean_squared_error"
+    assert np.allclose(default.importances_mean, imp)
 
     forest = shared_importance(
         RandomForestRegressor(n_estimators=50),

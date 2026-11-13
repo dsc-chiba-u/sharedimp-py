@@ -147,7 +147,7 @@ class AnchorResidualizer(TransformerMixin, BaseEstimator):
     Notes
     -----
     Degenerate cases are handled by deterministic rules shared with the R
-    package (``docs/specification.md``, section 3.1):
+    package (common specification, section 5.1; see ``docs/specification.md``):
 
     * *Constant anchor* (``max == min`` on the fitting rows): slopes are not
       identified and are set to ``0``; features are only centered.

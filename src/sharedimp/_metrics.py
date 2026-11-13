@@ -4,7 +4,8 @@ scikit-learn scorer names and R ``yardstick`` metric names do not always denote
 the same quantity (the best-known case: ``yardstick::rsq`` is a squared
 correlation, scikit-learn's ``"r2"`` is the coefficient of determination).
 :func:`common_scorer` returns scikit-learn compatible scorers whose definitions
-are fixed by ``docs/specification.md`` (section 5) and verified against
+are fixed by the common specification (section 9.1; see
+``docs/specification.md``) and verified against
 ``yardstick`` in ``tests/test_cross_language.py``.
 
 Every scorer follows the scikit-learn convention *greater is better*: losses

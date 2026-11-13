@@ -30,7 +30,16 @@ from sklearn.svm import SVC
 from sharedimp import SharedImportanceResult, shared_importance
 
 SUMMARY = ["feature", "importance", "importance_std", "score_full", "score_reduced", "n_splits"]
-FOLD = ["feature", "split", "n_train", "n_test", "score_full", "score_reduced", "importance"]
+FOLD = [
+    "feature",
+    "split",
+    "n_train",
+    "n_test",
+    "score_full",
+    "score_reduced",
+    "importance",
+    "error",
+]
 
 
 # ------------------------------------------------------------------ 7. smoke
@@ -48,7 +57,8 @@ def test_regression_smoke(reg_data):
     assert list(res.importances.columns) == SUMMARY
     assert list(res.fold_results.columns) == FOLD
     assert res.importances.shape == (4, 6)
-    assert res.fold_results.shape == (3 * 4, 7)
+    assert res.fold_results.shape == (3 * 4, 8)
+    assert res.fold_results["error"].isna().all() and res.n_failed == 0
     assert res.features == ["x0", "x1", "x2", "x3"]
     assert res.scoring == "neg_root_mean_squared_error"
     assert (res.n_splits, res.n_samples, res.n_features) == (3, 240, 4)
@@ -126,13 +136,49 @@ def test_string_class_labels_and_decision_function_scorer(clf_data):
     np.testing.assert_array_equal(res.importances_mean, res2.importances_mean)
 
 
-def test_default_scoring_uses_estimator_score(reg_data):
+def test_default_scoring_is_mse_for_regressors(reg_data):
     X, y = reg_data
     cv = KFold(3)
     default = shared_importance(LinearRegression(), X, y, cv=cv)
+    mse = shared_importance(LinearRegression(), X, y, cv=cv, scoring="neg_mean_squared_error")
+    assert default.scoring == "neg_mean_squared_error"
+    pd.testing.assert_frame_equal(default.fold_results, mse.fold_results)
+    assert (default.fold_results["score_full"] < 0).all()  # negated loss
+    # ... not the estimator's own score (R^2)
     r2 = shared_importance(LinearRegression(), X, y, cv=cv, scoring="r2")
-    assert default.scoring == "score"
-    np.testing.assert_allclose(default.importances_mean, r2.importances_mean, rtol=1e-12)
+    assert not np.allclose(default.importances_mean, r2.importances_mean)
+    # the sign convention is the same whatever the metric: Full - Reduced
+    assert default.importances_mean[0] > 0 and r2.importances_mean[0] > 0
+
+
+def test_default_scoring_is_log_loss_for_classifiers(clf_data):
+    X, yb, ym = clf_data
+    for y in (yb, ym):
+        cv = StratifiedKFold(3)
+        default = shared_importance(LogisticRegression(max_iter=500), X, y, cv=cv)
+        sk = shared_importance(
+            LogisticRegression(max_iter=500), X, y, cv=cv, scoring="neg_log_loss"
+        )
+        assert default.scoring == "neg_log_loss"
+        np.testing.assert_allclose(
+            default.fold_results[["score_full", "score_reduced", "importance"]],
+            sk.fold_results[["score_full", "score_reduced", "importance"]],
+            rtol=1e-10,
+            atol=1e-12,
+        )
+        assert (default.fold_results["score_full"] < 0).all()
+        assert default.importances_mean[0] > 0  # Full - Reduced, positive = anchor helps
+    # pipelines are classified by their final step
+    pipe = make_pipeline(StandardScaler(), LogisticRegression())
+    assert shared_importance(pipe, X, yb, cv=3, random_state=0).scoring == "neg_log_loss"
+
+
+def test_default_scoring_needs_probabilities_for_classifiers(clf_data):
+    X, y, _ = clf_data
+    with pytest.raises(TypeError, match="predict_proba"):
+        shared_importance(SVC(), X, y, cv=3)
+    res = shared_importance(SVC(), X, y, cv=3, scoring="accuracy", random_state=0)
+    assert res.scoring == "accuracy"
 
 
 # ------------------------------------------------------- 8. pandas == NumPy
@@ -443,11 +489,15 @@ def test_error_handling(reg_data):
         shared_importance(est, X, None)
 
 
-def test_estimator_errors_propagate(reg_data):
+def test_estimator_errors_propagate_with_on_error_error(reg_data):
     X, y = reg_data
     with pytest.raises(ValueError):
         # a classifier cannot be fitted on a continuous target
-        shared_importance(LogisticRegression(), X, y, cv=KFold(3), scoring="accuracy")
+        shared_importance(
+            LogisticRegression(), X, y, cv=KFold(3), scoring="accuracy", on_error="error"
+        )
+    with pytest.raises(ValueError, match="on_error"):
+        shared_importance(LinearRegression(), X, y, on_error="ignore")
 
 
 def test_fold_matrix_errors(reg_data):

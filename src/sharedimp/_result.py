@@ -19,6 +19,7 @@ FOLD_COLUMNS = [
     "score_full",
     "score_reduced",
     "importance",
+    "error",
 ]
 SUMMARY_COLUMNS = [
     "feature",
@@ -35,16 +36,21 @@ def aggregate_fold_results(
 ) -> pd.DataFrame:
     """Aggregate per-split results into one row per anchor feature.
 
-    * ``importance``: arithmetic mean over splits of the per-split paired
-      difference ``score_full - score_reduced`` (never truncated at zero).
-    * ``importance_std``: sample standard deviation (``ddof=1``) of the
-      per-split differences; ``nan`` with a single split. This is a descriptive
-      measure of between-split variability, not a standard error.
-    * ``score_full`` / ``score_reduced``: mean scores over splits.
-    * ``n_splits``: number of splits that entered the means.
+    Only the splits with a defined (non-``nan``) importance contribute: a
+    failed fit, or a metric that is undefined on a split, is left out of every
+    mean and is not counted.
 
-    Rows follow the order of ``features``. Non-finite scores propagate (``nan``
-    in, ``nan`` out) instead of being silently dropped.
+    * ``importance``: arithmetic mean over the contributing splits of the
+      per-split paired difference ``score_full - score_reduced`` (never
+      truncated at zero).
+    * ``importance_std``: sample standard deviation (``ddof=1``) of those
+      differences; ``nan`` with fewer than two contributing splits. This is a
+      descriptive measure of between-split variability, not a standard error.
+    * ``score_full`` / ``score_reduced``: mean scores over the same splits.
+    * ``n_splits``: number of contributing splits (``0`` if none: all summary
+      values are then ``nan``).
+
+    Rows follow the order of ``features``.
     """
     rows: list[dict[str, Any]] = []
     # Positional grouping: feature labels need not be sortable or even unique types.
@@ -52,14 +58,21 @@ def aggregate_fold_results(
     for pos, feature in enumerate(features):
         sub = fold_results.loc[codes == pos]
         imp = sub["importance"].to_numpy(dtype=float)
+        ok = ~np.isnan(imp)
+        n_ok = int(ok.sum())
+        nan = float("nan")
         rows.append(
             {
                 "feature": feature,
-                "importance": float(np.mean(imp)),
-                "importance_std": float(np.std(imp, ddof=1)) if imp.size > 1 else float("nan"),
-                "score_full": float(np.mean(sub["score_full"].to_numpy(dtype=float))),
-                "score_reduced": float(np.mean(sub["score_reduced"].to_numpy(dtype=float))),
-                "n_splits": int(imp.size),
+                "importance": float(np.mean(imp[ok])) if n_ok else nan,
+                "importance_std": float(np.std(imp[ok], ddof=1)) if n_ok > 1 else nan,
+                "score_full": float(np.mean(sub["score_full"].to_numpy(dtype=float)[ok]))
+                if n_ok
+                else nan,
+                "score_reduced": float(np.mean(sub["score_reduced"].to_numpy(dtype=float)[ok]))
+                if n_ok
+                else nan,
+                "n_splits": n_ok,
             }
         )
     return pd.DataFrame(rows, columns=SUMMARY_COLUMNS)
@@ -75,16 +88,19 @@ class SharedImportanceResult:
         One row per anchor feature, in the order the features were evaluated,
         with columns ``feature``, ``importance``, ``importance_std``,
         ``score_full``, ``score_reduced``, ``n_splits``. ``importance`` is the
-        mean over splits of ``score_full - score_reduced``; it is positive when
-        keeping the anchor improves out-of-sample performance and may be
+        mean of ``score_full - score_reduced`` over the splits in which it is
+        defined; ``n_splits`` is the number of those splits. It is positive
+        when keeping the anchor improves out-of-sample performance and may be
         negative (it is never truncated). Scores are "greater is better"
         (losses are negated).
     fold_results : pandas.DataFrame
         Long-format per-split results with columns ``feature``, ``split``
         (0-based index of the split in the order produced by the CV splitter;
         the R package numbers the same splits from 1), ``n_train``,
-        ``n_test``, ``score_full``, ``score_reduced``, ``importance``. Rows
-        are ordered by split, then by feature.
+        ``n_test``, ``score_full``, ``score_reduced``, ``importance`` and
+        ``error``. Rows are ordered by split, then by feature. ``error`` is
+        ``None`` for a successful fit and the error message for a failed one
+        (whose scores and importance are ``nan``).
     scoring : str
         Name of the scorer (``"score"`` for the estimator's default).
     n_splits : int
@@ -122,6 +138,11 @@ class SharedImportanceResult:
     def importances_std(self) -> np.ndarray:
         """Between-split standard deviation of the importance per feature."""
         return self.importances["importance_std"].to_numpy(dtype=float)
+
+    @property
+    def n_failed(self) -> int:
+        """Number of (split, feature) fits that failed (see ``fold_results["error"]``)."""
+        return int(self.fold_results["error"].notna().sum())
 
     def to_frame(self, sort: bool = False) -> pd.DataFrame:
         """Return a copy of ``importances``; optionally sorted by decreasing importance."""

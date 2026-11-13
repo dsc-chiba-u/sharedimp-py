@@ -10,6 +10,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
+from sklearn.base import is_classifier
 from sklearn.utils import check_random_state
 
 from ._fitting import fit_clone, fit_null_model, index_rows, slice_fit_params
@@ -120,6 +121,35 @@ def _wrap(values: np.ndarray, columns: list[Any] | None, index: pd.Index | None)
     return pd.DataFrame(values, columns=columns, index=index)
 
 
+def _fit_and_score_pair(
+    estimator: Any,
+    y_train: Any,
+    y_test: Any,
+    full: tuple[Any, Any],
+    reduced: tuple[Any, Any],
+    scorer: Scorer,
+    *,
+    seed: int | None,
+    params: dict[str, Any],
+    single_class: bool,
+) -> tuple[float, float]:
+    """Fit and score the Full and the Reduced model of one (split, anchor) pair."""
+    if single_class:
+        raise ValueError("the training set contains a single class")
+    # Paired design: same rows, same hyperparameters, same seed for both models.
+    full_model = fit_clone(estimator, full[0], y_train, seed=seed, fit_params=params)
+    score_full = score_model(scorer, full_model, full[1], y_test)
+
+    if reduced[0].shape[1] == 0:
+        # Single-feature X: the Reduced representation is empty, so the Reduced
+        # model is the null model (training mean / training class frequencies).
+        reduced_model = fit_null_model(estimator, len(y_train), y_train, fit_params=params)
+    else:
+        reduced_model = fit_clone(estimator, reduced[0], y_train, seed=seed, fit_params=params)
+    score_reduced = score_model(scorer, reduced_model, reduced[1], y_test)
+    return score_full, score_reduced
+
+
 def _evaluate_anchor(
     estimator: Any,
     X: np.ndarray,
@@ -133,6 +163,7 @@ def _evaluate_anchor(
     fit_params: Mapping[str, Any] | None,
     columns: list[Any] | None,
     index: pd.Index | None,
+    on_error: str,
 ) -> dict[str, Any]:
     """Paired Full/Reduced evaluation of one anchor on one train/assessment split."""
     X_train, X_test = X[train], X[test]
@@ -154,29 +185,32 @@ def _evaluate_anchor(
         reduced_columns = train_index = test_index = None
 
     params = slice_fit_params(fit_params, train, X.shape[0])
+    single_class = is_classifier(estimator) and len(pd.unique(np.asarray(y_train).ravel())) < 2
 
-    # Paired design: same rows, same hyperparameters, same seed for both models.
-    full_model = fit_clone(
-        estimator, _wrap(full_train, columns, train_index), y_train, seed=seed, fit_params=params
-    )
-    full_test_w = _wrap(full_test, columns, test_index)
-    score_full = score_model(scorer, full_model, full_test_w, y_test)
-
-    if reduced_train.shape[1] == 0:
-        # Single-feature X: the Reduced representation is empty, so the Reduced
-        # model is the null model (training mean / training class frequencies).
-        reduced_model = fit_null_model(estimator, train.size, y_train, fit_params=params)
-    else:
-        reduced_model = fit_clone(
+    score_full = score_reduced = float("nan")
+    error: str | None = None
+    try:
+        score_full, score_reduced = _fit_and_score_pair(
             estimator,
-            _wrap(reduced_train, reduced_columns, train_index),
             y_train,
+            y_test,
+            (_wrap(full_train, columns, train_index), _wrap(full_test, columns, test_index)),
+            (
+                _wrap(reduced_train, reduced_columns, train_index),
+                _wrap(reduced_test, reduced_columns, test_index),
+            ),
+            scorer,
             seed=seed,
-            fit_params=params,
+            params=params,
+            single_class=single_class,
         )
-    score_reduced = score_model(
-        scorer, reduced_model, _wrap(reduced_test, reduced_columns, test_index), y_test
-    )
+    except Exception as exc:
+        if on_error == "error":
+            raise
+        # Learner failure: recorded, not raised. Both scores of the pair are
+        # discarded so that the row never mixes a score with a missing one.
+        score_full = score_reduced = float("nan")
+        error = f"{type(exc).__name__}: {exc}"
 
     return {
         "n_train": int(train.size),
@@ -185,6 +219,7 @@ def _evaluate_anchor(
         "score_reduced": score_reduced,
         # Scorers are "greater is better": positive <=> keeping the anchor helps.
         "importance": score_full - score_reduced,
+        "error": error,
         "_constant_anchor": bool(residualizer.constant_anchor_),
     }
 
@@ -202,6 +237,7 @@ def shared_importance(
     groups: Any = None,
     features: Any = None,
     fit_params: Mapping[str, Any] | None = None,
+    on_error: str = "warn",
     n_jobs: int | None = None,
     random_state: int | np.random.RandomState | None = None,
     verbose: int = 0,
@@ -246,10 +282,13 @@ def shared_importance(
         Target. Continuous, binary or multiclass (labels of any dtype).
     scoring : str, callable or None, default=None
         A single scikit-learn scorer name (e.g. ``"neg_root_mean_squared_error"``,
-        ``"neg_log_loss"``, ``"roc_auc_ovr"``) or a scorer callable
-        ``scorer(estimator, X, y)``. ``None`` uses ``estimator.score``.
-        Probability- and decision-function-based scorers are supported through
-        the scikit-learn scorer machinery.
+        ``"roc_auc"``, ``"r2"``) or a scorer callable ``scorer(estimator, X, y)``
+        such as :func:`sharedimp.common_scorer`. ``None`` uses the default
+        metric of the common R/Python specification: the mean squared error
+        (``"neg_mean_squared_error"``) for regressors and the multinomial log
+        loss (``"neg_log_loss"``) for classifiers. Whatever the metric, the
+        importance is always ``score_full - score_reduced`` with scores
+        oriented "greater is better".
     cv : int, CV splitter or iterable, default=5
         An ``int`` ``k`` gives a *shuffled* ``StratifiedKFold`` (classifier
         with binary/multiclass ``y``) or *shuffled* ``KFold`` (otherwise),
@@ -265,6 +304,15 @@ def shared_importance(
         Extra keyword arguments for ``estimator.fit``. Array-likes with
         ``n_samples`` rows (e.g. ``sample_weight``) are subset to the training
         rows of each split.
+    on_error : {"warn", "error"}, default="warn"
+        What to do when fitting, predicting or scoring fails for one
+        (split, feature) pair -- including a classifier's training set that
+        contains a single class. ``"warn"`` records ``nan`` scores and the
+        error message for that pair (column ``error`` of ``fold_results``),
+        continues with the other pairs, emits one warning with the number of
+        failures, and aggregates each feature over its successful splits
+        (``n_splits`` reports how many). ``"error"`` re-raises the first
+        failure immediately.
     n_jobs : int, default=None
         Number of joblib workers over (split, anchor) tasks. ``-1`` uses all
         cores. Results do not depend on ``n_jobs``.
@@ -302,6 +350,8 @@ def shared_importance(
     ...                         scoring="neg_mean_squared_error", cv=5, random_state=0)
     >>> list(res.importances.columns)
     ['feature', 'importance', 'importance_std', 'score_full', 'score_reduced', 'n_splits']
+    >>> res.n_failed
+    0
     """
     if not hasattr(estimator, "fit") or not hasattr(estimator, "get_params"):
         raise TypeError(
@@ -312,6 +362,8 @@ def shared_importance(
         raise TypeError("`estimator` must be an instance, not a class.")
     if fit_params is not None and not isinstance(fit_params, Mapping):
         raise TypeError("`fit_params` must be a dict or None.")
+    if on_error not in ("warn", "error"):
+        raise ValueError(f"`on_error` must be 'warn' or 'error', got {on_error!r}.")
 
     X_values, names, index = _validate_X(X)
     y = _validate_y(y, X_values.shape[0])
@@ -348,6 +400,7 @@ def shared_importance(
             fit_params=fit_params,
             columns=columns,
             index=index,
+            on_error=on_error,
         )
         for s, j in tasks
     )
@@ -367,6 +420,18 @@ def shared_importance(
             stacklevel=2,
         )
     fold_df = pd.DataFrame.from_records(records, columns=[*FOLD_COLUMNS, "_feature_pos"])
+    fold_df["error"] = fold_df["error"].astype(object).where(fold_df["error"].notna(), None)
+    n_failed = int(fold_df["error"].notna().sum())
+    if n_failed:
+        first = fold_df.loc[fold_df["error"].notna()].iloc[0]
+        warnings.warn(
+            f"{n_failed} of {len(fold_df)} (split, feature) fits failed and were recorded "
+            "as NaN; each feature is aggregated over its successful splits (see `n_splits`). "
+            "Details are in the `error` column of `fold_results`. First failure "
+            f"(feature {first['feature']!r}, split {first['split']}): {first['error']}",
+            UserWarning,
+            stacklevel=2,
+        )
     feature_labels = [names[j] for j in anchor_indices]
     importances = aggregate_fold_results(fold_df, feature_labels)
     fold_df = fold_df.drop(columns="_feature_pos")

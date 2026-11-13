@@ -348,7 +348,8 @@ def test_r_specification_parity_fixture():
     np.testing.assert_allclose(
         y, [1.8, 1.3, 3.6, 7.9, 9.0, 9.7, 11.4, 15.8, 17.1, 17.6, 19.7, 23.2], atol=1e-12
     )
-    for scoring in ("neg_mean_squared_error", common_scorer("mse")):
+    # None: the default metric (MSE for regressors) is the R default as well
+    for scoring in (None, "neg_mean_squared_error", common_scorer("mse")):
         res = shared_importance(LinearRegression(), X, y, scoring=scoring, cv=cv)
         imp = res.importances.set_index("feature")
         for feature, expected in R_SPEC_SUMMARY.items():

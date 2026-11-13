@@ -1,7 +1,8 @@
 """Tests of the conventions fixed by the common R/Python specification.
 
 Small deterministic data; every expected value is computed independently.
-Section numbers refer to ``docs/specification.md``.
+Section numbers refer to the common specification
+(``sharedimp-r/docs/specification.md``).
 """
 
 from __future__ import annotations
@@ -22,7 +23,16 @@ from sharedimp._direction import direction_diagnostic
 from sharedimp._fitting import fit_null_model
 
 SUMMARY = ["feature", "importance", "importance_std", "score_full", "score_reduced", "n_splits"]
-FOLD = ["feature", "split", "n_train", "n_test", "score_full", "score_reduced", "importance"]
+FOLD = [
+    "feature",
+    "split",
+    "n_train",
+    "n_test",
+    "score_full",
+    "score_reduced",
+    "importance",
+    "error",
+]
 
 
 @pytest.fixture
@@ -40,7 +50,7 @@ def small():
     return X, y
 
 
-# --------------------------------------------- §3 column order of Full / Reduced
+# --------------------------------------------- §6 column order of Full / Reduced
 @pytest.mark.parametrize("anchor", [0, 1, 2])
 def test_full_keeps_anchor_in_original_position(recorder, small, anchor):
     X, y = small
@@ -57,7 +67,7 @@ def test_full_keeps_anchor_in_original_position(recorder, small, anchor):
     np.testing.assert_array_equal(reduced.to_numpy(), np.delete(full.to_numpy(), anchor, axis=1))
 
 
-# ------------------------------------------------------- §3.1 degenerate cases
+# ------------------------------------------------------- §5.1 degenerate cases
 def test_collinear_columns_are_kept_as_exact_zeros(recorder, small):
     X, y = small
     Xd = np.column_stack([X, X[:, 0], 5.0 - 3.0 * X[:, 0]])  # duplicate and affine copy
@@ -133,7 +143,7 @@ def test_constant_anchor_warns_once(small):
     assert res.importances["importance"].iloc[1] == pytest.approx(0.0, abs=1e-12)
 
 
-# ----------------------------------------------------------- §3.2 single feature
+# ------------------------------------------------- §3, §8.3 single feature
 def test_single_feature_regression_uses_training_mean(small):
     X, y = small
     X1 = X[:, [0]]
@@ -186,7 +196,7 @@ def test_single_feature_dataframe_and_null_model_details(small):
     assert null.predict(np.empty((1, 0)))[0] == pytest.approx(3.75)
 
 
-# -------------------------------------------------------------- §5 sign, metrics
+# -------------------------------------------------------------- §9 sign, metrics
 def test_importance_sign_for_losses_and_gains(small):
     X, y = small
     cv = KFold(3)
@@ -239,7 +249,10 @@ def test_rsq_is_undefined_for_constant_predictions(small):
         LinearRegression(), X[:, [0]], y, scoring=common_scorer("rsq"), cv=KFold(2)
     )
     assert res.fold_results["score_reduced"].isna().all()
-    assert res.importances["importance"].isna().all()  # NaN propagates, never dropped
+    assert res.fold_results["error"].isna().all()  # undefined metric, not a learner failure
+    # no split contributes: the summary is NaN and says so (n_splits == 0)
+    assert res.importances["importance"].isna().all()
+    assert (res.importances["n_splits"] == 0).all()
 
 
 def test_classification_scorers_align_classes_missing_from_training():
@@ -264,7 +277,7 @@ def test_classification_scorers_align_classes_missing_from_training():
         common_scorer("log_loss")(NoProba(), X[:2], np.array(["a", "b"]))
 
 
-# ------------------------------------------------------------- §6 output schema
+# ------------------------------------------------------------ §11 output schema
 def test_output_schema(small):
     X, y = small
     df = pd.DataFrame(X, columns=["a", "b", "c"])
@@ -283,6 +296,7 @@ def test_output_schema(small):
     assert list(fr["feature"]) == ["a", "b", "c"] * 3
     assert (fr["n_train"] + fr["n_test"] == 12).all()
     assert all(fr[c].dtype.kind == "i" for c in ("split", "n_train", "n_test"))
+    assert fr.columns[-1] == "error" and fr["error"].isna().all()  # appended after the common ones
 
     # the summary is the aggregation of the per-split table
     g = fr.groupby("feature", sort=False)

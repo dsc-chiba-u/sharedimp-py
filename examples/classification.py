@@ -10,7 +10,7 @@ from sharedimp import shared_importance
 
 model = make_pipeline(StandardScaler(), LogisticRegression(max_iter=2000))
 
-# Binary: log loss on predicted probabilities, plus the exploratory direction diagnostic.
+# Binary: log loss on predicted probabilities.
 X, y = load_breast_cancer(return_X_y=True, as_frame=True)
 X = X.iloc[:, :8]
 binary = shared_importance(
@@ -19,7 +19,6 @@ binary = shared_importance(
     y,
     scoring="neg_log_loss",
     cv=RepeatedStratifiedKFold(n_splits=5, n_repeats=2, random_state=0),
-    direction=True,
     n_jobs=-1,
 )
 print(binary.to_frame(sort=True).round(4).to_string(index=False))

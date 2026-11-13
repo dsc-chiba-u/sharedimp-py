@@ -15,7 +15,9 @@ Positioning — keep this wording consistent everywhere (README, docs, docstring
 * The contribution is software engineering: fold-internal residualization (no
   leakage), any estimator / scorer / CV splitter, paired evaluation,
   reproducibility, per-fold results, tests.
-* The direction diagnostic is exploratory and is **not** a causal effect.
+* There is **no direction diagnostic** in the v0.1 API (removed 2026-11-13; the
+  R and Python definitions differed). Do not re-expose `sharedimp._direction`
+  without an agreed common definition. Importances are not causal effects.
 * No confidence intervals, p-values or other formal inference. Do not add them
   unless explicitly asked. `importance_std` is a descriptive between-split SD.
 
@@ -25,16 +27,25 @@ Large benchmarks belong in `sharedimp-experiments`, not in this repository.
 
 ## Specification
 
-* `docs/specification.md` is the **provisional** common spec, written on the
-  Python side because `sharedimp-r/docs/specification.md` did not exist on
-  2026-11-12. If that file appears, read it first and treat it as authoritative;
-  reconcile differences explicitly (§9 of the provisional spec lists the open
-  items) rather than silently changing behaviour.
+* `docs/specification.md` (v0.2-draft, 2026-11-13) is the common R/Python
+  specification as implemented here. `sharedimp-r/docs/specification.md`
+  declares itself the single source of truth; on 2026-11-13 its committed text
+  (`6c5631d`) still differed, while an uncommitted revision in the R working
+  tree matched this one. Read both before touching behaviour; re-check the
+  state of the R repository first, it is being edited in parallel.
+  `docs/r_side_changes.md` lists what the R package must change; spec §11
+  tracks what the R draft asks of Python (default metric, learner-failure
+  handling and the spec pointer are still open — ask before changing them).
+  Items marked **[decided]** in the spec were decided by the project owner —
+  do not reopen them on your own.
 * `docs/relation_to_umfi.md` records what the paper and the official
   implementations do, how this package differs, and what was and was not
   verified numerically.
 * Never change the statistical quantity for implementation convenience. If an
   implementation constraint seems to require it, stop and raise it.
+* A change to anything in the spec (algorithm, degenerate rules, metric
+  definitions, column names, row order) is a cross-language change: update the
+  spec, `docs/r_side_changes.md` and the cross-language test together.
 
 ## Algorithm (summary; the spec is normative)
 
@@ -57,6 +68,13 @@ Invariants that must hold:
   special-case `neg_*` names.
 * Never truncate scores or importances (negative importance is valid output).
 * Nothing is estimated from assessment rows.
+* Full keeps every column in the original order with the raw anchor in place;
+  Reduced is Full without the anchor column. Nothing is dropped.
+* Degenerate cases (spec §3.1): constant anchor or feature is detected by
+  `max == min` (never via a computed mean); a feature with
+  `SS_res <= 1e-10 * SS_tot` gets a residual of exactly 0 on all rows. No
+  absolute thresholds — the rules must stay invariant to units.
+* `p = 1`: the Reduced model is the null model (`_fitting.fit_null_model`).
 * Results are independent of `n_jobs` and of which subset of `features` is
   evaluated (seeds are pre-assigned per (split, column)).
 * The user's estimator is never mutated; explicitly set `random_state` values
@@ -71,26 +89,28 @@ Invariants that must hold:
 | `_resampling.py` | `resolve_cv`, `make_splits`: CV spec → concrete index pairs |
 | `_fitting.py` | `clone_with_seed`, `fit_clone`, per-fold slicing of `fit_params` |
 | `_scoring.py` | `resolve_scorer`, `score_model` |
-| `_direction.py` | optional direction diagnostic |
+| `_metrics.py` | `common_scorer`: metric definitions pinned across R and Python |
+| `_direction.py` | internal, unexported, experimental; not called by anything |
 | `_result.py` | `SharedImportanceResult`, `aggregate_fold_results` |
 | `_core.py` | `shared_importance()`: validation, seeding, joblib dispatch, assembly |
 
 Keep these concerns separate. `_core.py` orchestrates; it should not grow
 statistics of its own. Public API = what `__init__.py` exports
-(`shared_importance`, `AnchorResidualizer`, `SharedImportanceResult`).
+(`shared_importance`, `AnchorResidualizer`, `SharedImportanceResult`,
+`common_scorer`, `COMMON_METRICS`).
 
 ## Public API
 
 ```python
 shared_importance(estimator, X, y, *, scoring=None, cv=5, groups=None,
-                  features=None, direction=False, fit_params=None,
+                  features=None, fit_params=None,
                   n_jobs=None, random_state=None, verbose=0)
 ```
 
 Returns `SharedImportanceResult` with `.importances` (one row per feature:
-`feature, importance, importance_std, score_full, score_reduced, n_splits[, direction]`)
-and `.fold_results` (one row per split × feature:
-`feature, split, n_train, n_test, score_full, score_reduced, importance[, direction]`).
+`feature, importance, importance_std, score_full, score_reduced, n_splits`)
+and `.fold_results` (one row per split × feature, split-major, `split` 0-based — R uses 1:
+`feature, split, n_train, n_test, score_full, score_reduced, importance`).
 Column names are part of the cross-language contract — do not rename them
 without updating the spec and coordinating with the R package.
 
@@ -126,17 +146,42 @@ you use a newer API, either raise the minimum deliberately (and update
     predictors, scorer sign.
   * `tests/test_api.py` — regression / binary / multiclass smoke tests,
     pandas vs. NumPy, CV splitters, scorers, parallel vs. serial,
-    reproducibility, negative importance, error handling, direction.
+    reproducibility, negative importance, error handling.
   * `tests/test_sklearn_compat.py` — scikit-learn estimator checks for the
     transformer.
+  * `tests/test_common_spec.py` — conventions fixed by the common spec: column
+    order, degenerate rules and their unit invariance, `p = 1`, sign, schema,
+    common scorers, parallel = serial.
+  * `tests/test_cross_language.py` — agreement with `yardstick` and with the R
+    package on `tests/fixtures/cross_language/inputs.json`. The reference
+    `r_reference.json` was produced by running R at the commit named in its
+    `meta` block; the test also holds the fixture and numbers of R spec §15.1.
+    Regenerate the reference with
+    `generate_r_reference.R` (never edit it by hand, never fill in numbers that
+    were not computed by R).
   * `tests/test_parity_official.py` — parity with the official UMFI Python
     code, downloaded from a pinned commit (not vendored: upstream has no
-    license). Skips without network; never replace a skipped comparison with
+    license). Split into "exact agreement expected" and "agreement not
+    expected". Skips without network; never replace a skipped comparison with
     made-up numbers.
 * Every behavioural change needs a test; every bug fix needs a regression test.
-* Report results honestly: if something could not be verified (e.g. the R
-  implementation, because R is unavailable), write that down in
-  `docs/relation_to_umfi.md` instead of implying it was checked.
+* Report results honestly: if something could not be verified, write that down
+  in `docs/relation_to_umfi.md` / `docs/specification.md` §9 instead of implying
+  it was checked.
+
+### Regenerating the R reference
+
+R is not on the PATH; it lives in a conda environment. Load the R package from
+a *copy* so that nothing is written into `../sharedimp-r`:
+
+```bash
+R=/home/koki/anaconda3/envs/sharedimp-dev/bin/Rscript
+COPY=$(mktemp -d) && git -C ../sharedimp-r archive HEAD | tar -x -C "$COPY"
+$R tests/fixtures/cross_language/generate_r_reference.R \
+   tests/fixtures/cross_language/inputs.json \
+   tests/fixtures/cross_language/r_reference.json \
+   "$COPY" "$(git -C ../sharedimp-r rev-parse HEAD)"
+```
 
 ## Conventions
 

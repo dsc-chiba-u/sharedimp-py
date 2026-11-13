@@ -63,7 +63,7 @@ result = shared_importance(
 )
 
 result.importances  # one row per feature
-result.fold_results  # one row per (split, feature)
+result.fold_results  # one row per (feature, split)
 result.to_frame(sort=True)  # sorted by decreasing importance
 result.fold_matrix()  # features x splits table of per-split importances
 ```
@@ -139,14 +139,46 @@ r.coef_, r.intercept_
 * **`importance_std`** is the standard deviation of the per-split importances.
   It is descriptive; it is not a standard error and the package provides no
   confidence intervals or p-values.
-* **`direction=True`** adds an exploratory diagnostic (Spearman correlation
-  between the anchor and the Full model's out-of-sample prediction). It is
-  **not** a causal effect.
+* **Degenerate features.** A feature that is an exact affine function of the
+  anchor (e.g. a duplicate) gets a residual of exactly zero; the column is kept.
+* **Single feature.** With one column the Reduced model is the null model
+  (training mean, or training class frequencies).
+* **No direction diagnostic in v0.1.** Importances say how much a feature
+  helps prediction, not in which direction it acts, and they are not causal
+  effects.
+
+## Same numbers as the R package
+
+The R package `sharedimp` follows the same specification. To compare results
+across languages, fix what differs between the ecosystems: pass explicit
+splits and use a metric whose definition is pinned in both languages.
+
+```python
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import PredefinedSplit
+from sharedimp import common_scorer, shared_importance
+
+result = shared_importance(
+    LinearRegression(),
+    X,
+    y,
+    scoring=common_scorer("r2"),  # = yardstick::rsq_trad, not yardstick::rsq
+    cv=PredefinedSplit(fold_labels - 1),  # the same fold labels as in R
+)
+```
+
+`common_scorer()` knows `mse`, `rmse`, `mae`, `r2`, `rsq`, `log_loss`,
+`accuracy` and `roc_auc`. Names alone are not enough: scikit-learn's `"r2"` is
+the coefficient of determination, `yardstick::rsq` is a squared correlation.
+The agreement is tested against numbers produced by R
+(`tests/test_cross_language.py`).
 
 ## Documentation
 
-* [docs/specification.md](docs/specification.md) — algorithm, conventions and
-  output format (provisional common specification for the Python and R packages).
+* [docs/specification.md](docs/specification.md) — algorithm, degenerate cases,
+  metric definitions and output schema shared by the Python and R packages.
+* [docs/r_side_changes.md](docs/r_side_changes.md) — what the R package has to
+  change to conform, and what was verified to agree already.
 * [docs/relation_to_umfi.md](docs/relation_to_umfi.md) — relation to the UMFI
   paper and its official implementations, differences, and parity results.
 * [examples/](examples) — runnable scripts.

@@ -1,0 +1,145 @@
+name: DockerHub/GHCR
+
+# Builds the container image, tests it, and publishes it to
+#   ghcr.io/dsc-chiba-u/sharedimp-py   and   docker.io/koki/sharedimp-py
+#
+# * Pull requests: build and test only. Nothing is pushed, no registry login.
+# * Push to main:  build, test, then push `latest` and the short commit SHA.
+# * Push of a release tag `vX.Y.Z`: build, test, then push `X.Y.Z`, `X.Y` and
+#   the short commit SHA (not `latest`).
+#
+# Both registries receive the same image: one build, one push, two names.
+# Publishing to PyPI is deliberately NOT part of this workflow.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  GHCR_IMAGE: ghcr.io/dsc-chiba-u/sharedimp-py
+  DOCKERHUB_IMAGE: docker.io/koki/sharedimp-py
+  TEST_IMAGE: sharedimp-py:test
+
+jobs:
+  build_test_push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      # Publish only from main or from a release tag, never from a pull request.
+      PUBLISH: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Require Docker Hub credentials
+        if: env.PUBLISH == 'true'
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        run: |
+          missing=""
+          [ -n "$DOCKER_USERNAME" ] || missing="$missing DOCKER_USERNAME"
+          [ -n "$DOCKER_PASSWORD" ] || missing="$missing DOCKER_PASSWORD"
+          if [ -n "$missing" ]; then
+            echo "::error title=Docker Hub credentials missing::Repository secret(s) not set:$missing. Add them under Settings > Secrets and variables > Actions (DOCKER_PASSWORD should be a Docker Hub access token with write access to koki/sharedimp-py), then re-run this workflow. Nothing was pushed to any registry."
+            exit 1
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Image tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.GHCR_IMAGE }}
+            ${{ env.DOCKERHUB_IMAGE }}
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short,prefix=
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      # The Dockerfile itself imports sharedimp and runs the smoke test, so a
+      # successful build is already a tested build.
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: ${{ env.TEST_IMAGE }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Test the built image
+        run: |
+          docker run --rm "$TEST_IMAGE" python -c "import sharedimp, sklearn; print('sharedimp', sharedimp.__version__, '| scikit-learn', sklearn.__version__)"
+          docker run --rm "$TEST_IMAGE" python /opt/sharedimp/smoke_test.py
+          # The image must not contain the build context, wheels or dev tools.
+          docker run --rm "$TEST_IMAGE" sh -c 'test ! -e /src && test ! -e /wheels && ! python -c "import pytest" 2>/dev/null && echo "contents: ok"'
+          docker image inspect "$TEST_IMAGE" --format 'size: {{.Size}} bytes, user: {{.Config.User}}'
+
+      - name: Log in to GHCR
+        if: env.PUBLISH == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: env.PUBLISH == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # Same context, same cache as the tested build: the layers are reused,
+      # and a single push sends one image to both registries.
+      - name: Push to GHCR and Docker Hub
+        id: push
+        if: env.PUBLISH == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+
+      - name: Summary
+        if: always()
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          {
+            if [ "$PUBLISH" = "true" ] && [ -n "$DIGEST" ]; then
+              echo "### Published"
+              echo "Digest: \`$DIGEST\`"
+              echo '```'
+              echo "$TAGS"
+              echo '```'
+            elif [ "$PUBLISH" = "true" ]; then
+              echo "### Not published (a step failed; see the log)"
+            else
+              echo "### Build and test only (nothing was pushed)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

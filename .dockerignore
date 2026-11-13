@@ -1,0 +1,19 @@
+# Allow-list: the build context contains only what the image is built from.
+# Everything else (git history, CI files, tests, docs, examples, virtual
+# environments, caches, build artifacts) is never sent to the Docker daemon.
+*
+
+!pyproject.toml
+!README.md
+!LICENSE
+!src/
+!docker/
+!docker/smoke_test.py
+
+# ... minus caches and local artifacts inside the allowed directories
+**/__pycache__/
+**/*.py[cod]
+**/*.egg-info/
+**/.DS_Store
+**/*~
+**/*.swp

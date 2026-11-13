@@ -126,12 +126,43 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/ruff check . && .venv/bin/ruff format --check .
 .venv/bin/mypy
 .venv/bin/python -m build && .venv/bin/twine check dist/*
+docker build -t sharedimp-py .   # runs docker/smoke_test.py; needs Docker access
 ```
 
 Supported: Python ≥ 3.10, scikit-learn ≥ 1.3, NumPy ≥ 1.23, pandas ≥ 1.5,
 SciPy ≥ 1.9, joblib ≥ 1.2. CI has a job pinned to exactly these minimums; when
 you use a newer API, either raise the minimum deliberately (and update
 `pyproject.toml`, CI and the changelog) or avoid it.
+
+## Docker image and publishing
+
+* `Dockerfile` (two stages, `python:3.13-slim`): builds the wheel, installs it
+  with its runtime dependencies, then runs `docker/smoke_test.py` **during the
+  build**, as an unprivileged user. `.dockerignore` is an allow-list
+  (`pyproject.toml`, `README.md`, `LICENSE`, `src/`, `docker/smoke_test.py`);
+  a new file needed in the image must be added there. Keep tests, docs, dev
+  tools and caches out of the image.
+* `.github/workflows/build_test_push.yml` ("DockerHub/GHCR"):
+  * pull requests: build + test only, no login, no push;
+  * push to `main`: push `latest` and the short commit SHA;
+  * push of a tag `vX.Y.Z`: push `X.Y.Z`, `X.Y` and the short SHA (not `latest`);
+  * targets `ghcr.io/dsc-chiba-u/sharedimp-py` (auth: `GITHUB_TOKEN`) and
+    `koki/sharedimp-py` on Docker Hub (auth: repository secrets
+    `DOCKER_USERNAME`, `DOCKER_PASSWORD`); one build, one push, both names;
+  * if the Docker Hub secrets are missing the job fails *before* building,
+    with an explicit error, and nothing is pushed anywhere.
+* The same publishing policy (registries, tags, PR behaviour, secret names) is
+  intended for `sharedimp-r` (`ghcr.io/dsc-chiba-u/sharedimp-r`,
+  `koki/sharedimp-r`); keep the two workflows aligned. The reference this was
+  modelled on is `dsc-chiba-u/fbrglm`, with these deliberate differences: no
+  push from pull requests, a single build for both registries, tags from
+  `docker/metadata-action`.
+* **PyPI publishing is separate.** It must live in its own workflow (none
+  exists yet) and must not be coupled to the Docker workflow in either
+  direction.
+* Docker is not usable by the development account on this machine (no access
+  to the daemon socket); verify image builds through the pull-request run of
+  the workflow, and say so when a local build was not possible.
 
 ## Testing policy
 

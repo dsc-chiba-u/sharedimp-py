@@ -1,6 +1,7 @@
 # sharedimp
 
 [![CI](https://github.com/dsc-chiba-u/sharedimp-py/actions/workflows/ci.yml/badge.svg)](https://github.com/dsc-chiba-u/sharedimp-py/actions/workflows/ci.yml)
+[![DockerHub/GHCR](https://github.com/dsc-chiba-u/sharedimp-py/actions/workflows/build_test_push.yml/badge.svg)](https://github.com/dsc-chiba-u/sharedimp-py/actions/workflows/build_test_push.yml)
 
 Cross-validated **UMFI-LR** feature importance for scikit-learn workflows.
 
@@ -42,6 +43,39 @@ pip install git+https://github.com/dsc-chiba-u/sharedimp-py.git
 ```
 
 Requires Python ≥ 3.10, scikit-learn ≥ 1.3, NumPy, SciPy, pandas and joblib.
+
+### Docker
+
+A container image with `sharedimp` and its dependencies preinstalled is
+published to two registries (the same image under two names):
+
+| Registry | Image |
+| --- | --- |
+| GitHub Container Registry | `ghcr.io/dsc-chiba-u/sharedimp-py` |
+| Docker Hub | `koki/sharedimp-py` |
+
+Tags: `latest` (the most recent successful build of the `main` branch) and the
+short commit SHA of every published build (e.g. `:1bb2ce8`), for
+reproducibility. Release tags `vX.Y.Z` will additionally publish `X.Y.Z` and
+`X.Y`.
+
+```bash
+docker pull ghcr.io/dsc-chiba-u/sharedimp-py:latest     # or: koki/sharedimp-py:latest
+
+# built-in smoke test (a small scikit-learn regression example)
+docker run --rm ghcr.io/dsc-chiba-u/sharedimp-py python /opt/sharedimp/smoke_test.py
+
+# interactive Python
+docker run --rm -it ghcr.io/dsc-chiba-u/sharedimp-py
+
+# run your own script on your own data (the working directory is /work)
+docker run --rm -v "$PWD":/work ghcr.io/dsc-chiba-u/sharedimp-py python analysis.py
+```
+
+The image is based on the official `python:3.13-slim` image, runs as an
+unprivileged user and contains only the installed package and its runtime
+dependencies. To build it yourself: `docker build -t sharedimp-py .` (the build
+runs the smoke test and fails if it fails).
 
 ## Quick start
 

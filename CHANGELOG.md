@@ -19,6 +19,9 @@ Alignment with the R package (`sharedimp-r`) on a common specification
 - Cross-language parity tests against reference values generated with R
   (`yardstick` and `sharedimp-r`), and `docs/r_side_changes.md`.
 - A warning when an anchor is constant on a training set.
+- Docker image (`Dockerfile`, `docker/smoke_test.py`) and a workflow that
+  publishes it to GHCR (`ghcr.io/dsc-chiba-u/sharedimp-py`) and Docker Hub
+  (`koki/sharedimp-py`).
 - `docs/specification.md` rewritten as the common R/Python specification
   (v0.2-draft), aligned with the R draft.
 - `AnchorResidualizer.constant_anchor_`.

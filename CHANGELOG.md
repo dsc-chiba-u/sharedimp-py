@@ -28,6 +28,16 @@ Alignment with the R package (`sharedimp-r`) on a common specification
 
 ### Changed
 
+- **Non-finite predictions are learner failures.** The assessment predictions
+  of every fitted model are inspected (one extra prediction pass); `NaN`/`inf`
+  predictions are recorded as a failure with a message in `error`, also when
+  the scorer would have returned `NaN` silently.
+- Cross-language tests now compare directly with output of the reconciled R
+  package (`sharedimp-r` `92f9ecb`); the conversions for the old R layout are
+  gone, and predictions, the default metric and failing splits are covered.
+  `docs/rank_deficiency.md` records how least-squares solvers behave on
+  rank-deficient designs.
+
 - **Default metric.** `scoring=None` now means the mean squared error for
   regressors (`neg_mean_squared_error`) and the multinomial log loss for
   classifiers (`neg_log_loss`), as in the R package, instead of

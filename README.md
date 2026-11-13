@@ -165,8 +165,9 @@ r.coef_, r.intercept_
   exposed as `neg_*`). `sharedimp` uses them as they are, so
   `importance = score_full − score_reduced` always reads "positive = the anchor
   helps", for every metric.
-* **Failed fits.** If the estimator fails on some (split, feature) pair — or a
-  classifier's training set contains a single class — that pair is recorded as
+* **Failed fits.** If the estimator fails on some (split, feature) pair —
+  an exception, non-finite predictions, or a classifier's training set with a
+  single class — that pair is recorded as
   `NaN` with its message in `result.fold_results["error"]`, a warning reports
   how many pairs failed, and each feature is averaged over its successful
   splits (`n_splits` tells you how many; `result.n_failed` counts failures).
@@ -218,8 +219,17 @@ result = shared_importance(
 `common_scorer()` knows `mse`, `rmse`, `mae`, `r2`, `rsq`, `log_loss`,
 `accuracy` and `roc_auc`. Names alone are not enough: scikit-learn's `"r2"` is
 the coefficient of determination, `yardstick::rsq` is a squared correlation.
-The agreement is tested against numbers produced by R
-(`tests/test_cross_language.py`).
+
+The agreement is a regression test (`tests/test_cross_language.py`): residualized
+data, predictions, both result tables, the default metric, exact collinearity,
+single-feature input and failed fits are compared with output produced by
+running the R package, to `1e-8` for closed-form learners. Two limits are worth
+knowing: iteratively fitted models agree only as far as their optimisers
+converge (multinomial logistic regression: about `3e-5`), and on rank-deficient
+designs (e.g. two features that are exact copies of each other) ordinary least
+squares is not unique, so R's `lm` and `LinearRegression` can differ — see
+[docs/rank_deficiency.md](docs/rank_deficiency.md). Random forests and other
+stochastic learners are not numerically comparable across languages.
 
 ## Documentation
 
@@ -227,8 +237,10 @@ The agreement is tested against numbers produced by R
   [sharedimp-r/docs/specification.md](https://github.com/dsc-chiba-u/sharedimp-r/blob/main/docs/specification.md).
 * [docs/specification.md](docs/specification.md) — how this package realises
   each section of it, Python-specific behaviour and recorded deviations.
+* [docs/rank_deficiency.md](docs/rank_deficiency.md) — what least-squares
+  solvers do on collinear designs, and why that is a learner matter.
 * [docs/r_side_changes.md](docs/r_side_changes.md) — open items between the two
-  repositories and what was verified to agree.
+  repositories.
 * [docs/relation_to_umfi.md](docs/relation_to_umfi.md) — relation to the UMFI
   paper and its official implementations, differences, and parity results.
 * [examples/](examples) — runnable scripts.

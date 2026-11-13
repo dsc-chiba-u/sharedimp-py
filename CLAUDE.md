@@ -36,9 +36,12 @@ Large benchmarks belong in `sharedimp-experiments`, not in this repository.
   code → test), Python-specific behaviour, recorded deviations, and what is
   open. Every intentional deviation from the common specification must be
   written there.
-* `docs/r_side_changes.md` lists what is open on the R side (currently only
-  corrections to the specification text, and the steps to take once its
-  revision is committed).
+* `docs/r_side_changes.md` lists what is open on the R side (as of R commit
+  `92f9ecb`: two statements of the specification about rank-deficient designs;
+  no implementation change).
+* `docs/rank_deficiency.md` records why OLS results on collinear designs depend
+  on the solver. It is a learner matter: never "fix" it by changing what
+  estimator the package runs for the user.
 * Decisions taken by the project owner (2026-11-13) — do not reopen them on
   your own: anchor stays in its original column position; exactly collinear
   residuals are fixed at zero and kept; `p = 1` uses the null model; common
@@ -46,9 +49,10 @@ Large benchmarks belong in `sharedimp-experiments`, not in this repository.
   loss; learner failures are recorded as `NaN` with a warning by default
   (`on_error="error"` stops); Docker tags `latest` + SHA on `main`,
   `X.Y.Z` + SHA on `vX.Y.Z`.
-* **Do not regenerate `tests/fixtures/cross_language/r_reference.json` until
-  the R-side specification revision is complete** (owner's instruction). Steps
-  for then: `docs/r_side_changes.md` section C.
+* `tests/fixtures/cross_language/r_reference.json` was generated from R commit
+  `92f9ecb` (recorded in its `meta` block). Regenerate it whenever the R
+  package changes numbers or tables, and only by running R — never edit it by
+  hand. If R cannot be run, leave the file alone and report why.
 * `docs/relation_to_umfi.md` records what the paper and the official
   implementations do, how this package differs, and what was and was not
   verified numerically.
@@ -94,7 +98,10 @@ Invariants that must hold:
   column; the run continues, warns once, and aggregates over the splits with a
   defined importance (`n_splits` counts them). `on_error="error"` re-raises.
   A failure of either model discards the whole pair. Input and
-  residualization errors are never swallowed.
+  residualization errors are never swallowed. Non-finite assessment
+  predictions are failures: `_scoring.check_finite_predictions` inspects them
+  once per fitted model (the scorer alone cannot be trusted to raise). A `NaN`
+  score from finite predictions (undefined metric) is not a failure.
 * Results are independent of `n_jobs` and of which subset of `features` is
   evaluated (seeds are pre-assigned per (split, column)).
 * The user's estimator is never mutated; explicitly set `random_state` values
@@ -206,13 +213,19 @@ you use a newer API, either raise the minimum deliberately (and update
   * `tests/test_failures.py` — learner failures: recording, warning,
     aggregation over successful splits, `on_error="error"`, single-class
     training sets, parallel = serial.
-  * `tests/test_cross_language.py` — agreement with `yardstick` and with the R
-    package on `tests/fixtures/cross_language/inputs.json`. The reference
-    `r_reference.json` was produced by running R at the commit named in its
-    `meta` block; the test also holds the fixture and numbers of R spec §15.1.
-    Regenerate the reference with
-    `generate_r_reference.R` (never edit it by hand, never fill in numbers that
-    were not computed by R).
+  * `tests/test_cross_language.py` — the cross-language regression test. The
+    R output in `r_reference.json` (representations, predictions, both result
+    tables, default metric, collinearity, `p = 1`, failures) is compared
+    **directly**; the only adaptation is the split label (R 1-based). Do not
+    add conversions to make a comparison pass: a mismatch is either a real
+    difference or a learner effect, and must be understood. Tolerance `1e-8`
+    for closed-form learners; multinomial logistic regression `1e-4` (R's
+    optimiser). Rank-deficient designs use the test-only `AliasingOLS` (R's
+    `lm.fit` convention), full-rank designs `LinearRegression`.
+  * `tests/fixtures/cross_language/` — `inputs.json` (shared inputs, from
+    `make_inputs.py`; append new draws at the end so existing values do not
+    change), `generate_r_reference.R`, `r_reference.json`,
+    `rank_deficiency_study.py`.
   * `tests/test_parity_official.py` — parity with the official UMFI Python
     code, downloaded from a pinned commit (not vendored: upstream has no
     license). Split into "exact agreement expected" and "agreement not
@@ -224,6 +237,10 @@ you use a newer API, either raise the minimum deliberately (and update
   it was checked.
 
 ### Regenerating the R reference
+
+Do this after any change of the R package that affects numbers or tables, and
+after changing `inputs.json`. Check `git -C ../sharedimp-r status` first and
+use a committed state.
 
 R is not on the PATH; it lives in a conda environment. Load the R package from
 a *copy* so that nothing is written into `../sharedimp-r`:

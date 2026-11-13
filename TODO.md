@@ -1,6 +1,6 @@
 # sharedimp-py 作業記録と TODO
 
-最終更新: 2026-11-13（`main` = `dd0bef0` 時点）
+最終更新: 2026-11-13（R 参照値の再生成後。直前の `main` は `5277017`）
 
 このファイルは作業の引き継ぎ用メモです。仕様そのものは
 `../sharedimp-r/docs/specification.md`（R/Python 共通仕様の正本）、Python 側の適合状況は
@@ -18,7 +18,7 @@
 | GitHub Actions `DockerHub/GHCR` | 成功。`latest` と `dd0bef0` を公開済み |
 | Docker イメージ | `ghcr.io/dsc-chiba-u/sharedimp-py`、`koki/sharedimp-py`（同一 digest） |
 | PyPI | **未公開** |
-| R 側で確認した版 | `sharedimp-r` `eaafaee`（読み取りのみ。R 側には一切書き込んでいない） |
+| R 側で確認した版 | `sharedimp-r` `92f9ecb`（読み取りとコピーからの実行のみ。R 側には一切書き込んでいない） |
 
 ## 2. これまでの作業
 
@@ -65,32 +65,34 @@
 - `docs/specification.md` を「R 正本へのポインタ + 適合表 + Python 固有事項 + 差異の記録」に変更。
 - Docker workflow の手動実行に `publish` 入力を追加（R 版と同じ）。
 
+### 2.5 cross-language parity の完成（本コミット）
+
+- R 参照値を最新 R 版（`92f9ecb`）から再生成。`generate_r_reference.R` を新 schema に対応させた。
+- `tests/test_cross_language.py` から旧 R 実装向けの読み替え（符号反転、列の並べ替え、
+  行順変更）を削除し、R の出力と直接比較する形にした（split 番号の 0/1 始まりだけは仕様どおり）。
+- 比較対象: 残差化係数、Full/Reduced 行列、予測値、fold 表、summary、既定 metric、
+  完全共線、`p = 1`、learner failure。closed-form の learner は 1e-8 で一致。
+- 非有限の予測値を learner failure として記録するようにした
+  （scorer が黙って NaN を返す場合に `error` 列が空になる問題を修正）。
+- rank deficiency の検証記録 `docs/rank_deficiency.md` を追加。
+
 ## 3. TODO
 
-### 3.1 R 側の完了待ち（指示があるまで着手しない）
+### 3.1 R 版との整合
 
-- [ ] **R 参照値の再生成**。`tests/fixtures/cross_language/r_reference.json` は古い R コミット
-      `6c5631d` の出力で、`tests/test_cross_language.py` が読み替え（列名での比較、
-      raw metric の符号、行の並べ替え）をしている。R 側仕様改訂の完了が確認できたら:
-  - [ ] `generate_r_reference.R` を新しい R の出力に合わせて直す
-        （`score_*` 列、`dropped` → `collinear` フラグ、`drop_constant` 引数の廃止）。
-  - [ ] 参照値を再生成し、テストの読み替えを外す。
-  - [ ] 既定 metric どうしの比較と、失敗 fold（両言語 `on_error="warn"`）の比較を追加。
-  - 手順は `CLAUDE.md` の "Regenerating the R reference" と `docs/r_side_changes.md` §C。
-- [ ] 再生成後、`docs/specification.md` §5–§6 と `docs/r_side_changes.md` を更新。
+- [x] R 参照値の再生成と parity test の整理（完了）。
+- [ ] R 側が数値や結果表に影響する変更をしたら、参照値を再生成してテストを回す
+      （手順は `CLAUDE.md` の "Regenerating the R reference"）。
+- [ ] R 側にも同じ `inputs.json` を読むテストがあると双方向で検証できる（未実装）。
 
 ### 3.2 R 側への申し送り（R リポジトリで対応してもらう）
 
-実装の変更依頼はなし。仕様書の記述訂正のみ（詳細は `docs/r_side_changes.md` §B）。
+実装の変更依頼はなし。仕様書の記述2点のみ（詳細は `docs/r_side_changes.md` §B）。
 
-- [ ] 既定 metric と `on_error` の実装コミットが `692c3fe` と書かれているが、正しくは `399bb20`。
-- [ ] 「log loss のクリップは scikit-learn ≥ 1.5」→ 1.3.2 で既に machine epsilon。
-- [ ] `accuracy` の対応: scikit-learn の `"accuracy"` は `predict` を使う。
-      argmax の厳密な対応は `common_scorer("accuracy")`。
-- [ ] §3 の「Python は `p = 1` を拒否する」は古い。
-- [ ] §15.1 の共線バリアント: scikit-learn 1.3.2 の `LinearRegression` では一致しない
-      （x3 が 45.55 でなく 41.79）。rank 判定を明示した OLS が必要である旨を追記。
-- [ ] §16 の各項目の状態（仕様書ポインタ化は完了、ほかも commit 済み）。
+- [ ] §8.1「rank 落ちを認識する solver はすべて同じ予測値になる」は、assessment 行が
+      従属関係を満たさない場合（training で定数の anchor）には成り立たない。
+- [ ] §8.1 で Python 側の対応として挙げている `numpy.linalg.lstsq(rcond=1e-7)` は、
+      その場合に R と一致しない。R の規約（従属列の係数を 0）を再現する必要がある。
 
 ### 3.3 リリースに向けて
 
@@ -120,12 +122,13 @@
 
 ## 4. 記録しておく差異と注意点
 
-- **非有限の予測値**: R は予測値を検査して失敗扱いにする。Python は予測値を直接見ないため、
-  scorer が例外を出せば失敗として記録、出さなければ NaN の score として集計から外れる。
-  集計値は同じで、`error` 列の有無だけが違う。
 - **`split` の番号**: Python は 0 始まり、R は 1 始まり。比較は行の位置で行う。
-- **共線な設計行列と OLS**: 互いに共線な列がある場合、古い scikit-learn の `LinearRegression`
-  は R と違う値を返すことがある。parity テストでは rank 判定を明示した OLS を使っている。
+- **rank 落ちした設計行列と OLS**: 互いに共線な列や training で定数の anchor がある場合、
+  OLS の解は一意でなく、solver によって予測値が変わる（`docs/rank_deficiency.md`）。
+  UMFI-LR の不一致ではなく下流 learner の問題。parity テストでは R の `lm.fit` の規約を
+  再現するテスト専用 learner（`AliasingOLS`）を使う。ユーザーの estimator は置き換えない。
+- **多クラスのロジスティック回帰**: R の `nnet::multinom` の収束精度のため、
+  log loss の一致は約 3e-5 まで（テストの許容誤差は 1e-4）。
 - **scikit-learn 1.3 のテスト補助関数**: ランナーの CPU 判定によって
   `check_estimators_pickle` が失敗することがあるため、その場合だけ skip している。
 - **R リポジトリは並行して編集されている**。作業前に `git -C ../sharedimp-r status` で状態を確認する。

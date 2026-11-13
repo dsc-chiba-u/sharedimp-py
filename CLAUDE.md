@@ -27,17 +27,28 @@ Large benchmarks belong in `sharedimp-experiments`, not in this repository.
 
 ## Specification
 
-* `docs/specification.md` (v0.2-draft, 2026-11-13) is the common R/Python
-  specification as implemented here. `sharedimp-r/docs/specification.md`
-  declares itself the single source of truth; on 2026-11-13 its committed text
-  (`6c5631d`) still differed, while an uncommitted revision in the R working
-  tree matched this one. Read both before touching behaviour; re-check the
-  state of the R repository first, it is being edited in parallel.
-  `docs/r_side_changes.md` lists what the R package must change; spec §11
-  tracks what the R draft asks of Python (default metric, learner-failure
-  handling and the spec pointer are still open — ask before changing them).
-  Items marked **[decided]** in the spec were decided by the project owner —
-  do not reopen them on your own.
+* **The single source of truth is `../sharedimp-r/docs/specification.md`**
+  (common R/Python specification). Read it before touching behaviour, and
+  check `git -C ../sharedimp-r status` first: that repository is edited in
+  parallel and its specification has been ahead of its last commit before.
+* `docs/specification.md` in this repository is *not* a second specification.
+  It is the Python-side record: revision checked, conformance table (section →
+  code → test), Python-specific behaviour, recorded deviations, and what is
+  open. Every intentional deviation from the common specification must be
+  written there.
+* `docs/r_side_changes.md` lists what is open on the R side (currently only
+  corrections to the specification text, and the steps to take once its
+  revision is committed).
+* Decisions taken by the project owner (2026-11-13) — do not reopen them on
+  your own: anchor stays in its original column position; exactly collinear
+  residuals are fixed at zero and kept; `p = 1` uses the null model; common
+  column names; no direction diagnostic in v0.1; default metric MSE / log
+  loss; learner failures are recorded as `NaN` with a warning by default
+  (`on_error="error"` stops); Docker tags `latest` + SHA on `main`,
+  `X.Y.Z` + SHA on `vX.Y.Z`.
+* **Do not regenerate `tests/fixtures/cross_language/r_reference.json` until
+  the R-side specification revision is complete** (owner's instruction). Steps
+  for then: `docs/r_side_changes.md` section C.
 * `docs/relation_to_umfi.md` records what the paper and the official
   implementations do, how this package differs, and what was and was not
   verified numerically.
@@ -70,11 +81,20 @@ Invariants that must hold:
 * Nothing is estimated from assessment rows.
 * Full keeps every column in the original order with the raw anchor in place;
   Reduced is Full without the anchor column. Nothing is dropped.
-* Degenerate cases (spec §3.1): constant anchor or feature is detected by
+* Degenerate cases (spec §5.1): constant anchor or feature is detected by
   `max == min` (never via a computed mean); a feature with
   `SS_res <= 1e-10 * SS_tot` gets a residual of exactly 0 on all rows. No
   absolute thresholds — the rules must stay invariant to units.
 * `p = 1`: the Reduced model is the null model (`_fitting.fit_null_model`).
+* `scoring=None` means MSE for regressors and log loss for classifiers
+  (`_scoring.resolve_scorer`), never `estimator.score`. The importance is
+  `score_full - score_reduced` for every metric.
+* Learner failures (`_core._evaluate_anchor`): with `on_error="warn"` a failed
+  (split, feature) pair gets `NaN` scores and its message in the `error`
+  column; the run continues, warns once, and aggregates over the splits with a
+  defined importance (`n_splits` counts them). `on_error="error"` re-raises.
+  A failure of either model discards the whole pair. Input and
+  residualization errors are never swallowed.
 * Results are independent of `n_jobs` and of which subset of `features` is
   evaluated (seeds are pre-assigned per (split, column)).
 * The user's estimator is never mutated; explicitly set `random_state` values
@@ -103,14 +123,14 @@ statistics of its own. Public API = what `__init__.py` exports
 
 ```python
 shared_importance(estimator, X, y, *, scoring=None, cv=5, groups=None,
-                  features=None, fit_params=None,
+                  features=None, fit_params=None, on_error="warn",
                   n_jobs=None, random_state=None, verbose=0)
 ```
 
 Returns `SharedImportanceResult` with `.importances` (one row per feature:
 `feature, importance, importance_std, score_full, score_reduced, n_splits`)
 and `.fold_results` (one row per split × feature, split-major, `split` 0-based — R uses 1:
-`feature, split, n_train, n_test, score_full, score_reduced, importance`).
+`feature, split, n_train, n_test, score_full, score_reduced, importance, error`).
 Column names are part of the cross-language contract — do not rename them
 without updating the spec and coordinating with the R package.
 
@@ -183,6 +203,9 @@ you use a newer API, either raise the minimum deliberately (and update
   * `tests/test_common_spec.py` — conventions fixed by the common spec: column
     order, degenerate rules and their unit invariance, `p = 1`, sign, schema,
     common scorers, parallel = serial.
+  * `tests/test_failures.py` — learner failures: recording, warning,
+    aggregation over successful splits, `on_error="error"`, single-class
+    training sets, parallel = serial.
   * `tests/test_cross_language.py` — agreement with `yardstick` and with the R
     package on `tests/fixtures/cross_language/inputs.json`. The reference
     `r_reference.json` was produced by running R at the commit named in its
@@ -197,7 +220,7 @@ you use a newer API, either raise the minimum deliberately (and update
     made-up numbers.
 * Every behavioural change needs a test; every bug fix needs a regression test.
 * Report results honestly: if something could not be verified, write that down
-  in `docs/relation_to_umfi.md` / `docs/specification.md` §9 instead of implying
+  in `docs/relation_to_umfi.md` / `docs/specification.md` §6 instead of implying
   it was checked.
 
 ### Regenerating the R reference

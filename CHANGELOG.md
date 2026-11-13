@@ -28,6 +28,22 @@ Alignment with the R package (`sharedimp-r`) on a common specification
 
 ### Changed
 
+- **Default metric.** `scoring=None` now means the mean squared error for
+  regressors (`neg_mean_squared_error`) and the multinomial log loss for
+  classifiers (`neg_log_loss`), as in the R package, instead of
+  `estimator.score` (R² / accuracy). The importance remains
+  `score_full - score_reduced`.
+- **Learner failures.** A failed fit for a (split, feature) pair no longer
+  aborts the run: it is recorded as `NaN` with its message in the new `error`
+  column of `fold_results`, one warning is emitted, and each feature is
+  aggregated over its successful splits (`n_splits` is their number;
+  `SharedImportanceResult.n_failed`). `on_error="error"` restores the previous
+  behaviour. A classifier's single-class training set counts as a failure.
+- Splits on which the metric is undefined (`NaN`) are excluded from the
+  summary instead of making it `NaN`.
+- `docs/specification.md` is now the Python-side record (conformance,
+  deviations) of the common specification kept in `sharedimp-r`.
+
 - Constant columns are detected exactly (`max == min`) instead of through a
   rounded mean; the exact-collinearity rule (`SS_res <= 1e-10 * SS_tot`) is
   unchanged.

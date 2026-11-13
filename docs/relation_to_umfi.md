@@ -62,8 +62,8 @@ quantity is estimated and exposed*; none changes the definition
 | Learner | random forest / extra trees, hard-coded | any scikit-learn estimator or pipeline, cloned, fixed hyperparameters |
 | Resampling | none (OOB), optional repetitions | any scikit-learn CV splitter (grouped, stratified, repeated, …) |
 | Significance / `R²` gate | yes (and different in R and Python) | none: always residualize |
-| Random-noise injection for degenerate columns | yes | none; deterministic rules (`docs/specification.md` §3.1) |
-| Column layout | all columns, anchor in place | the same (specification §3) |
+| Random-noise injection for degenerate columns | yes | none; deterministic rules (common specification §5.1) |
+| Column layout | all columns, anchor in place | the same (common specification §6) |
 | Truncation of scores and of negative importances | yes | none |
 | Full/Reduced pairing | independent unseeded forests | same rows, same hyperparameters, same seed |
 | Output | vector / data frame of importances | summary table + per-split table |
@@ -121,7 +121,7 @@ difference exists.
 | Gate | a feature with `R² ≤ 0.01` (Python) / slope p-value `≥ 0.01` (R) is left raw by the official code and residualized by sharedimp | `test_gate_upstream_skips_weakly_correlated_features` |
 | Truncation | the official code floors scores and importances at 0; with a response independent of all features it returns exactly 0 for every feature, while sharedimp reports negative scores and non-zero, partly negative importances | `test_truncation_upstream_never_returns_negative_importance` |
 | CV vs. OOB | `shared_importance()` residualizes within training folds and scores held-out rows; the official code residualizes on all rows and uses the forest's out-of-bag score | `test_cross_validation_vs_oob_agree_only_approximately` |
-| Noise injection | the official code adds Gaussian noise to (near-)constant columns; sharedimp uses the deterministic rules of `specification.md` §3.1 | not compared (the official result is random) |
+| Noise injection | the official code adds Gaussian noise to (near-)constant columns; sharedimp uses the deterministic rules of the common specification §5.1 | not compared (the official result is random) |
 | Learner and metric | official: fixed forest, OOB `R²` or accuracy; sharedimp: any estimator and scorer | — |
 
 For the third row the numbers obtained on the test data (`n = 400`, four
@@ -148,5 +148,5 @@ numerical equivalence.
 
 Separate from the above: `tests/test_cross_language.py` compares this package
 with `yardstick` and with the R package on shared deterministic inputs, using
-reference numbers produced by running R. See `specification.md` §9 and
+reference numbers produced by running R. See `specification.md` §6 and
 `r_side_changes.md`.

@@ -1,130 +1,72 @@
-# Changes required in `sharedimp-r`
+# Open items for `sharedimp-r`
 
-Written from `sharedimp-py` on 2026-11-13. Nothing in `sharedimp-r` was
-modified; its files were only read, and its code was only executed from a
-copy. "Spec §" refers to [`specification.md`](specification.md) in this
-repository, "R spec §" to `sharedimp-r/docs/specification.md`.
+Written from `sharedimp-py` on 2026-11-13 (third revision). Nothing in
+`sharedimp-r` was modified; its files were only read. "Spec §" refers to the
+common specification `sharedimp-r/docs/specification.md`; "Python notes §" to
+[`specification.md`](specification.md) in this repository.
 
-Two states of the R repository are distinguished:
+State of the R repository that was read: commit `eaafaee` (2026-11-13), clean
+working tree.
 
-* **Committed**: commit `6c5631d` (2026-11-12). This is the state that can be
-  cited and reproduced, and the state from which the Python cross-language
-  reference `tests/fixtures/cross_language/r_reference.json` was generated.
-* **Working tree**: on 2026-11-13 the R repository contained a large set of
-  **uncommitted** changes (`R/*.R`, `docs/specification.md`, tests) that
-  implement the same common specification. They were read to align the two
-  specifications, but were not executed and may still change. The column
-  "working tree" below records what was seen (around 13:00); it is not a
-  verification.
+## A. Implementation
 
-## A. Changes that affect numbers or the result tables
+The R package at `eaafaee` implements what the earlier revisions of this list
+asked for: anchor in its original position, exactly collinear columns kept as
+zeros with the `SS_res ≤ 1e-10 · S_jj` rule, constants tested by `max == min`,
+the common column names with greater-is-better scores, split-major rows, `r2`
+/ `rsq` as separate metrics, no direction diagnostic. **No implementation
+change is requested.**
 
-| # | Topic | Committed `6c5631d` | Required (spec) | Working tree |
-| --- | --- | --- | --- | --- |
-| 1 | Column order of the Full representation | anchor first, then the residualized columns | all columns in the original order, raw anchor **in its original position**; Reduced = Full without the anchor column (§3) | implemented |
-| 2 | Exactly collinear columns | residual columns that are "constant" on the training rows are **dropped** from both representations | never drop; residual **exactly 0 on training and assessment rows**, column kept (§3.1 D3) | implemented |
-| 3 | Collinearity test | `is_constant()` on the residual: `max − min ≤ 1e-10 · max(1, max\|v\|)` | `S_jj > 0` and `SS_res_j ≤ 1e-10 · S_jj`; no absolute threshold (§3.1) | implemented |
-| 4 | Constant anchor / constant feature | `is_constant()` (same tolerant test) | exactly constant (`S = 0`), **evaluated as `max == min`** (§3.1 D1, D2) | `ss_i == 0` after centering with `mean()` — see note |
-| 5 | Summary table | `feature, importance, sd, n_folds` | `feature, importance, importance_std, score_full, score_reduced, n_splits` (§6.1) | implemented |
-| 6 | Per-split table | `feature, id, id2, metric_full, metric_reduced, importance, error`; rows feature-major | `feature, split, n_train, n_test, score_full, score_reduced, importance` (+ `id, id2, error`); rows **split-major**; `split` 1-based in R (§6.2) | columns implemented; row order to be confirmed |
-| 7 | Orientation of scores | `metric_full`/`metric_reduced` are raw metric values | `score_*` are greater-is-better: `−ν` for metrics to minimize (§2, §6) | implemented |
-| 8 | R² | built-in `"rsq"` = `yardstick::rsq`, described as the R² both languages must use | two common metrics: `r2` = `yardstick::rsq_trad` (= scikit-learn `"r2"`) and `rsq` = `yardstick::rsq` (§5) | implemented (`"r2"`, alias `"rsq_trad"`; `"log_loss"`, alias `"mn_log_loss"`) |
-| 9 | Direction diagnostic | `direction = TRUE` argument, `direction` columns, `$direction` | not part of the v0.1 API (§8) | removed from the API |
+One difference in behaviour is recorded rather than requested:
 
-Notes:
+| Topic | R | Python | Note |
+| --- | --- | --- | --- |
+| Non-finite predictions | a learner failure (`check_prediction()`) | not inspected: scorers receive the fitted model, not its predictions. They become a failure when the scorer raises (the usual case), otherwise a non-finite score that is excluded from the aggregation with an empty `error` | Python notes §4.3. Same summary numbers in both cases; only the `error` text can differ. |
 
-**1–3** change results for learners whose behaviour depends on the number or
-order of columns, in particular the built-in random forest (`mtry` depends on
-the number of representation columns, which varied with the data when columns
-were dropped). For ordinary least squares they change no prediction, which is
-why the Python reference generated from the committed state is still valid.
-The committed rule also has an absolute floor (`max(1, ·)`), which made it
-depend on the units of the data: residuals of features recorded in small units
-(values around `1e-12`) were all declared constant and dropped.
+## B. Text of the common specification
 
-**4** is the one place where the working tree and the Python package differ in
-*how* a rule is evaluated, not in the rule. `sum((x − mean(x))^2) == 0` equals
-`max(x) == min(x)` whenever the computed mean of a constant vector is exactly
-that constant. R's `mean()` usually achieves this through long-double
-accumulation, but that is not guaranteed on platforms without extended
-precision (e.g. arm64), and with plain double summation it fails for simple
-values (`mean(c(0.1, 0.1, 0.1)) != 0.1`). When the test misses a constant
-anchor, the slope is computed from round-off and is arbitrary; applied to
-assessment rows where the anchor does vary, it produces arbitrary residuals.
-Recommended: `constant <- max(x) == min(x)` for the anchor and for each
-feature, and for a constant feature slope 0 with the intercept set to that
-constant (training residual exactly 0).
+Statements that are outdated now that the Python package has changed (Python
+commit of this revision; see the git log), or that need correcting:
 
-**6** With `on_error = "warn"`, `n_splits` is the number of successful splits.
-
-## B. Corrections to the text of the R specification
-
-Against the working-tree revision:
-
-| # | R spec | Issue |
+| # | Spec | Issue |
 | --- | --- | --- |
-| 10 | §5.1 | D1/D2 are stated as `S_ii = 0` / `S_jj = 0` "(exactly)"; add that this must be evaluated as `max = min` (note on item 4). |
-| 11 | §9.1, `log_loss` row | "scikit-learn ≥ 1.5 clips at machine epsilon; earlier versions used `1e-15`": scikit-learn **1.3.2** already clips at machine epsilon (checked: `log_loss` of a zero probability gives `−log(2⁻⁵²)/2 = 18.0218…`, not `17.2694…`). The Python package requires scikit-learn ≥ 1.3, and `common_scorer("log_loss")` clips at `2⁻⁵²` itself, independently of the scikit-learn version. |
-| 12 | §9.1, `accuracy` row | scikit-learn's `"accuracy"` scorer uses the estimator's `predict`, which is the argmax of the probabilities for most but not all classifiers (not for `SVC(probability=True)`). The exact counterpart of "argmax labels" is `common_scorer("accuracy")`. |
-| 13 | §9.1, `rsq` row | Python provides `common_scorer("rsq")`; it returns `NaN` when the prediction (or the truth) is constant on the assessment rows — always the case for the null model — matching `yardstick::rsq` returning `NA`. |
-| 14 | §15, §16 | written against `sharedimp-py` at `bfcb2a5`. Since then: `direction` removed, `p = 1` supported, `common_scorer()` added, the §15.1 fixture added as a test. Status of every §16 item: spec §11. |
-| 15 | §15.1 | the collinear variant (`x1_dup = 3·x1 − 2`) "also agreed to 2.9e-14" with `LinearRegression()`: true for scikit-learn 1.9.1, but with scikit-learn 1.3.2 / NumPy 1.23 `LinearRegression` gives a different result for `x3` (41.79 instead of 45.55), because for the anchors `x2`, `x3` the two residual columns of `x1` and `x1_dup` are collinear with each other and the rank deficiency is not reliably detected. The agreement holds in both environments with an explicitly rank-revealing least-squares fit. State the learner requirement (spec §9). |
-| 16 | header | the statement that `sharedimp-py` "contains only a README" (committed text) is outdated. |
+| 1 | §3 | "(Python currently rejects `p = 1`; see Section 16.)" — `p = 1` is accepted since Python `febd7ea`. |
+| 2 | §9.1, §10, §16 items 3–4 | "Python implements this since commit `692c3fe`": the default metric and `on_error` are **not** in `692c3fe`. They were observed in the Python working tree while it was being edited (the package is installed in editable mode) and are committed in the first Python commit after `692c3fe` ("Adopt the common default metric and learner-failure handling"). The description itself is accurate: `scoring=None` → `neg_mean_squared_error` / `common_scorer("log_loss")` (reported as `neg_log_loss`); `on_error = "warn"` (default) / `"error"`; `error` column; `n_failed`. |
+| 3 | §10 | Python stores the message too, as `"<ExceptionType>: <message>"` in an `error` column appended after the common columns ("R additionally stores the error message" suggests otherwise). Non-finite predictions: see section A. |
+| 4 | §11.2 | Python appends `error` after the common columns (it has no `id`/`id2`). |
+| 5 | §16 | item 5 (specification pointer) is done in that same commit: the Python `docs/specification.md` is now a pointer plus conformance table, Python notes and recorded deviations, and no longer describes the old default or failure behaviour. Items 1, 2, 6, 7 are committed, not "in the working tree". Remaining: the regeneration under item 7 (section C). |
+| 6 | §9.1 `log_loss` row; §16 item 6 | "scikit-learn ≥ 1.5 clips at machine epsilon; earlier versions used `1e-15`": scikit-learn **1.3.2** already clips at machine epsilon (checked: the log loss of a zero probability is `−log(2⁻⁵²)/2 = 18.0218…`, not `17.2694…`). The Python package requires scikit-learn ≥ 1.3 and its `common_scorer("log_loss")` clips at `2⁻⁵²` itself. |
+| 7 | §9.1 `accuracy` row | scikit-learn's `"accuracy"` scorer uses the estimator's `predict`, which is the argmax of the probabilities for most but not all classifiers (not for `SVC(probability=True)`). The exact counterpart of "argmax labels" is `common_scorer("accuracy")`. |
+| 8 | §9.1 `rsq` row | Python provides `common_scorer("rsq")`; like `yardstick::rsq` it is undefined (`NaN`) for a constant prediction or truth. |
+| 9 | §15.1 | the collinear variant "also agreed to 2.9e-14" with `LinearRegression()`: true for scikit-learn 1.9.1 / NumPy 2.4, but with scikit-learn 1.3.2 / NumPy 1.23 `LinearRegression` gives 41.79 instead of 45.55 for `x3`. For the anchors `x2` and `x3` the residuals of `x1` and `x1_dup` are collinear with each other, and the rank deficiency is not reliably detected. With an explicit minimum-norm least-squares fit the agreement holds in both environments. The specification should state that requirement on the learner. |
+| 10 | §17 | consistent with the Python workflow. One nuance: a manual run of the Python workflow publishes only from `main` or a release tag. |
 
-Against the committed text only (already addressed in the working tree):
-§6/§7 (column order, tolerant constant test), §9 (`rsq` as the common R²;
-`mn_log_loss` "clipped to `[1e-15, 1 − 1e-15]`" — `yardstick` 1.4.0 clips at
-`.Machine$double.eps`), §11 (column names), §13 (direction), and §4 (the Python
-package does not accept an integer vector of fold labels; use
-`PredefinedSplit(labels − 1)` or a list of `(train, test)` pairs).
+## C. After the specification revision is committed
 
-## C. Verified to agree (no change needed)
+Deliberately not done yet from the Python side:
 
-Against the committed R package, by running R (reference
-`r_reference.json`; test `tests/test_cross_language.py`):
+1. Regenerate `tests/fixtures/cross_language/r_reference.json` from the then
+   current R commit (script: `tests/fixtures/cross_language/generate_r_reference.R`,
+   which must first be adapted to the new R output: `score_*` columns,
+   `collinear` flags instead of `dropped`, no `drop_constant` argument).
+2. Remove the conversions in `tests/test_cross_language.py` that compensate for
+   the layout of the old R commit (sign of raw metrics, comparison by column
+   name, row reordering).
+3. Extend the comparison to the default metric of both languages and to a
+   failing split (`on_error = "warn"` in both), which the old reference cannot
+   cover.
 
-* residualization slopes, intercepts and transformed training/assessment data
-  (`1e-10`), and the set of exactly collinear features (R drops exactly the
-  columns Python sets to zero);
-* the null model for a single feature (`mse`, `r2`, `log_loss`, `accuracy`);
-* `shared_importance(learner = "linear")` on explicit folds: per-split scores,
-  importances, their mean, sample standard deviation and count, for regression
-  (`mse`, `rmse`, `mae`, `rsq`, `rsq_trad`; `1e-9`), binary (`mn_log_loss`,
-  `accuracy`, `roc_auc`; `1e-6`) and multiclass (`1e-4`) targets, including a
-  design with an exact duplicate and an affine copy;
-* metric values on fixed predictions, `yardstick` 1.4.0 vs. the Python common
-  scorers (`1e-12`): `mse`, `rmse`, `mae`, `rsq`, `rsq_trad`, `mn_log_loss`
-  (with a clipped zero probability), `accuracy` (with an argmax tie), binary
-  `roc_auc` (either event level), multiclass `roc_auc` (Hand–Till).
+## D. Verified to agree
 
-Against the numbers recorded in the working-tree R specification (§15.1):
-Python reproduces the summary and per-split values of the parity fixture, and
-of its collinear variant, to `1e-8`.
+* Against the R package at `6c5631d`, by running R (`r_reference.json`):
+  residualization (`1e-10`), the null model, `shared_importance(learner =
+  "linear")` on explicit folds for regression (`1e-9`), binary (`1e-6`) and
+  multiclass (`1e-4`) targets, and all common metric values against
+  `yardstick` 1.4.0 (`1e-12`).
+* Against the numbers recorded in spec §15.1 (from the reconciled R package):
+  the parity fixture and its collinear variant, every column of both tables, to
+  `1e-8` — with `scoring=None` (the common default), with
+  `"neg_mean_squared_error"` and with `common_scorer("mse")`.
 
-Already as specified in the committed package: sign of importance, no
-truncation, per-split evaluation with an unweighted mean, sample standard
-deviation.
-
-## D. Next steps on the R side
-
-1. Commit the working-tree revision (after its own checks).
-2. Apply item 4 / 10.
-3. Correct the specification text (items 11–16).
-4. Then, from `sharedimp-py`, regenerate `r_reference.json` against the new
-   commit and remove the conversions in `tests/test_cross_language.py` (sign of
-   raw metrics, comparison by column name, row reordering). Forest learners
-   can only be compared qualitatively.
-5. Optionally add an R test that reads
-   `sharedimp-py/tests/fixtures/cross_language/inputs.json`, so that both
-   packages are tested on identical inputs in both directions.
-
-## E. Open on the Python side (requested by R spec §16)
-
-Not changed here because they are API decisions outside the items decided on
-2026-11-13; see spec §11.
-
-* Default metric: Python `estimator.score` (R² / accuracy) vs. R `mse` /
-  `log_loss`.
-* Learner failure in a split: Python raises; R records `NA` and continues by
-  default.
-* Replacing the Python specification by a pointer to the R one.
+Not verified from this repository: the R package's behaviour for learner
+failures and its default-metric path were read in the source, not executed.

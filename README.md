@@ -103,7 +103,9 @@ result.fold_matrix()  # features x splits table of per-split importances
 ```
 
 `result.importances` has the columns `feature`, `importance`, `importance_std`,
-`score_full`, `score_reduced` and `n_splits`.
+`score_full`, `score_reduced` and `n_splits`; `result.fold_results` has
+`feature`, `split`, `n_train`, `n_test`, `score_full`, `score_reduced`,
+`importance` and `error`.
 
 ### Classification and probability-based scoring
 
@@ -154,10 +156,21 @@ r.coef_, r.intercept_
 
 ## Things to know
 
+* **Default metric.** Without `scoring`, regressors are scored by the mean
+  squared error (`neg_mean_squared_error`) and classifiers by the multinomial
+  log loss (`neg_log_loss`) — the same defaults as the R package. This is *not*
+  the estimator's own `score` (R² / accuracy); ask for those with
+  `scoring="r2"` or `scoring="accuracy"`.
 * **Scoring sign.** scikit-learn scorers are "greater is better" (losses are
   exposed as `neg_*`). `sharedimp` uses them as they are, so
   `importance = score_full − score_reduced` always reads "positive = the anchor
-  helps".
+  helps", for every metric.
+* **Failed fits.** If the estimator fails on some (split, feature) pair — or a
+  classifier's training set contains a single class — that pair is recorded as
+  `NaN` with its message in `result.fold_results["error"]`, a warning reports
+  how many pairs failed, and each feature is averaged over its successful
+  splits (`n_splits` tells you how many; `result.n_failed` counts failures).
+  Pass `on_error="error"` to stop at the first failure instead.
 * **Fixed hyperparameters.** The estimator is cloned and fitted as given; no
   tuning is performed.
 * **`cv=<int>`** means *shuffled* K-fold (stratified for classifiers), seeded
@@ -198,6 +211,7 @@ result = shared_importance(
     y,
     scoring=common_scorer("r2"),  # = yardstick::rsq_trad, not yardstick::rsq
     cv=PredefinedSplit(fold_labels - 1),  # the same fold labels as in R
+    on_error="error",  # a failure must not be mistaken for a value
 )
 ```
 
@@ -209,10 +223,12 @@ The agreement is tested against numbers produced by R
 
 ## Documentation
 
-* [docs/specification.md](docs/specification.md) — algorithm, degenerate cases,
-  metric definitions and output schema shared by the Python and R packages.
-* [docs/r_side_changes.md](docs/r_side_changes.md) — what the R package has to
-  change to conform, and what was verified to agree already.
+* The specification is shared with the R package and lives in its repository:
+  [sharedimp-r/docs/specification.md](https://github.com/dsc-chiba-u/sharedimp-r/blob/main/docs/specification.md).
+* [docs/specification.md](docs/specification.md) — how this package realises
+  each section of it, Python-specific behaviour and recorded deviations.
+* [docs/r_side_changes.md](docs/r_side_changes.md) — open items between the two
+  repositories and what was verified to agree.
 * [docs/relation_to_umfi.md](docs/relation_to_umfi.md) — relation to the UMFI
   paper and its official implementations, differences, and parity results.
 * [examples/](examples) — runnable scripts.

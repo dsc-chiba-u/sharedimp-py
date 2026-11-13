@@ -1,23 +1,26 @@
 """Cross-language parity with the R package and with yardstick.
 
 Reference values in ``tests/fixtures/cross_language/r_reference.json`` were
-produced by *running R* (see ``generate_r_reference.R`` in that directory and
-the ``meta`` block of the JSON file for versions and the commit of
-``sharedimp-r``). They are committed so that these tests need no R
-installation. Both languages read the same ``inputs.json``.
+produced by *running R* on a copy of ``sharedimp-r`` at the commit recorded in
+the ``meta`` block of that file (see ``generate_r_reference.R`` in the same
+directory). They are committed so that these tests need no R installation.
+Both languages read the same ``inputs.json``.
 
-What is compared, and why exact agreement is expected:
+The R output is compared **directly**: same column names, same column order of
+the representations, same row order of the per-split table, same orientation
+of the scores. The single adaptation is the split label, which the common
+specification defines as 1-based in R and 0-based in Python.
 
-* metric definitions: ``common_scorer`` vs. yardstick on fixed predictions;
-* residualization coefficients and transformed data on explicit rows;
-* ``shared_importance`` with deterministic learners (OLS, unpenalized logistic
-  regression) on explicit folds.
+Tolerance: ``1e-8`` wherever the learner is a closed-form computation (OLS,
+null model, class frequencies). Iteratively fitted models are compared at the
+accuracy their optimisers reach (``LOGISTIC_TOL``, ``MULTINOMIAL_TOL``); that
+is a property of the learners, not of the importance definition.
 
-The R commit used for the reference still placed the anchor first and dropped
-exactly collinear columns, whereas the common specification keeps the anchor
-in place and keeps collinear columns as zeros. For OLS and for the columns
-compared here this does not change any number, so the comparison is valid on
-both sides of that change.
+Rank-deficient designs (two features collinear with each other, a zero
+column, a constant anchor) are fitted with ``AliasingOLS``, which resolves the
+deficiency by R's ``lm.fit`` convention. ``LinearRegression`` leaves that
+decision to library defaults and is not used for those designs; the reasons
+and the measurements are in ``docs/rank_deficiency.md``.
 """
 
 from __future__ import annotations
@@ -29,10 +32,15 @@ import numpy as np
 import pandas as pd
 import pytest
 from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin
+from sklearn.dummy import DummyClassifier
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.model_selection import PredefinedSplit
 
 from sharedimp import AnchorResidualizer, common_scorer, shared_importance
+
+TOL = 1e-8  # closed-form learners
+LOGISTIC_TOL = 1e-8  # glm.fit (IRLS) vs. Newton-Cholesky: observed 2.5e-9
+MULTINOMIAL_TOL = 1e-4  # nnet::multinom (BFGS) vs. L-BFGS: observed 2.9e-5 to 4.0e-5
 
 FIXTURES = Path(__file__).parent / "fixtures" / "cross_language"
 INPUTS = json.loads((FIXTURES / "inputs.json").read_text())
@@ -170,63 +178,86 @@ def test_sklearn_scorer_names_agree_with_common_scorers_on_valid_input():
         )
 
 
-# ------------------------------------------------------------- residualization
-def test_residualization_matches_r():
-    im = INPUTS["importance"]
-    names = im["degenerate_feature_names"]
-    X = np.asarray(im["X_degenerate"])
-    folds = np.asarray(im["folds"])
-    train, assess = X[folds != 1], X[folds == 1]
-    assert len(REF["residualization"]) == len(names)
-    for i, ref in enumerate(REF["residualization"]):
-        assert ref["anchor"] == names[i]
-        r = AnchorResidualizer(anchor=i).fit(train)
-        others = [names.index(f) for f in ref["features"]]
-        np.testing.assert_allclose(r.coef_[others], ref["slope"], rtol=1e-10, atol=1e-12)
-        np.testing.assert_allclose(r.intercept_[others], ref["intercept"], rtol=1e-10, atol=1e-12)
-        # R (reference commit) dropped exactly the columns Python sets to zero.
-        assert sorted(np.asarray(names)[r.collinear_]) == sorted(ref["dropped"])
-        full_train, full_assess = r.transform(train), r.transform(assess)
-        # Compare by column name: the reference commit put the anchor first.
-        cols = [names.index(c) for c in ref["full_columns"]]
-        np.testing.assert_allclose(full_train[:, cols], np.asarray(ref["full_train"]), atol=1e-10)
-        np.testing.assert_allclose(full_assess[:, cols], np.asarray(ref["full_assess"]), atol=1e-10)
-        assert np.all(full_train[:, r.collinear_] == 0.0)
-        assert np.all(full_assess[:, r.collinear_] == 0.0)
+# ------------------------------------------------------------------- learners
+class AliasingOLS(RegressorMixin, BaseEstimator):
+    """OLS with intercept that resolves rank deficiency the way R's ``lm.fit`` does.
 
+    Columns of ``[1, X]`` are taken in order; a column whose part orthogonal
+    to the columns accepted so far is at most ``tol`` times its own norm is
+    *aliased*: its coefficient is fixed at zero (the limited pivoting of
+    LINPACK ``dqrdc2`` with ``tol = 1e-7``, plus sharedimp-r setting ``NA``
+    coefficients to 0). The remaining columns are fitted by least squares.
 
-# ------------------------------------------------------------ shared_importance
-class _RankRevealingOLS(RegressorMixin, BaseEstimator):
-    """OLS with intercept that treats near-zero singular values as zero.
+    Why not a minimum-norm solution (``numpy.linalg.lstsq``)? On the training
+    rows every least-squares solution has the same fitted values. On new rows
+    the predictions agree only if those rows satisfy the same linear
+    dependency. They do for two features that are collinear everywhere; they
+    do not for a column that is constant on the training rows but varies on
+    the assessment rows (rule D1: constant anchor), where aliasing ignores the
+    column and the minimum-norm solution gives it weight. See
+    ``docs/rank_deficiency.md``.
 
-    Needed for designs with exactly collinear columns. There the least-squares
-    fit is not unique and predictions agree across implementations only if the
-    rank deficiency is detected. R's ``lm`` (pivoted QR, tolerance 1e-7) always
-    detects it; ``LinearRegression`` leaves it to LAPACK's default threshold
-    (machine epsilon), which is borderline: with scikit-learn 1.3.2 / NumPy
-    1.23 it gave different predictions on the collinear variant of the R
-    parity fixture (importance 41.79 instead of 45.55), with scikit-learn
-    1.9.1 it did not.
+    Test-only: the package itself never replaces the user's estimator.
     """
 
-    def __init__(self, rcond=1e-10):
-        self.rcond = rcond
+    def __init__(self, tol=1e-7):
+        self.tol = tol
 
     def fit(self, X, y):
-        X = np.asarray(X, dtype=float)
+        A = np.column_stack([np.ones(len(X)), np.asarray(X, dtype=float)])
         y = np.asarray(y, dtype=float)
-        self.x_mean_ = X.mean(axis=0)
-        self.y_mean_ = y.mean()
-        self.coef_ = np.linalg.lstsq(X - self.x_mean_, y - self.y_mean_, rcond=self.rcond)[0]
+        basis: list[np.ndarray] = []  # orthonormal basis of the accepted columns
+        kept: list[int] = []
+        for j in range(A.shape[1]):
+            v = A[:, j].copy()
+            for q in basis:
+                v -= (q @ v) * q
+            for q in basis:  # second pass: re-orthogonalisation
+                v -= (q @ v) * q
+            norm = np.linalg.norm(A[:, j])
+            if norm > 0 and np.linalg.norm(v) > self.tol * norm:
+                basis.append(v / np.linalg.norm(v))
+                kept.append(j)
+        self.coef_ = np.zeros(A.shape[1])
+        self.coef_[kept] = np.linalg.lstsq(A[:, kept], y, rcond=None)[0]
+        self.aliased_ = [j - 1 for j in range(1, A.shape[1]) if j not in kept]
         return self
 
     def predict(self, X):
-        return self.y_mean_ + (np.asarray(X, dtype=float) - self.x_mean_) @ self.coef_
+        return np.column_stack([np.ones(len(X)), np.asarray(X, dtype=float)]) @ self.coef_
+
+
+class FailsWithoutMarker(AliasingOLS):
+    """OLS that refuses to fit unless the marker value is among the training targets."""
+
+    def __init__(self, marker=None, tol=1e-7):
+        super().__init__(tol=tol)
+        self.marker = marker
+
+    def fit(self, X, y):
+        if self.marker not in np.asarray(y):
+            raise RuntimeError("marker row is not in the training set")
+        return super().fit(X, y)
+
+
+class NaNWithoutMarker(AliasingOLS):
+    """OLS whose predictions are NaN unless the marker was among the training targets."""
+
+    def __init__(self, marker=None, tol=1e-7):
+        super().__init__(tol=tol)
+        self.marker = marker
+
+    def fit(self, X, y):
+        self.ok_ = self.marker in np.asarray(y)
+        return super().fit(X, y)
+
+    def predict(self, X):
+        pred = super().predict(X)
+        return pred if self.ok_ else np.full_like(pred, np.nan)
 
 
 def _logistic():
-    # Unpenalized maximum likelihood, converged tightly with a Newton solver
-    # (R: glm, i.e. IRLS). L-BFGS in older scikit-learn stops ~1e-5 early.
+    # Unpenalized maximum likelihood with a Newton solver (R: glm.fit, IRLS).
     return LogisticRegression(C=np.inf, solver="newton-cholesky", tol=1e-12, max_iter=1000)
 
 
@@ -236,141 +267,247 @@ def _multinomial():
     return LogisticRegression(C=np.inf, tol=1e-12, max_iter=20000)
 
 
+# --------------------------------------------------------------------- designs
+IM = INPUTS["importance"]
+FOLDS = np.asarray(IM["folds"])
+TRAIN, ASSESS = FOLDS != 1, FOLDS == 1  # the split used for the representation block
+
+
+def _frame(key):
+    names = {
+        "X": IM["feature_names"],
+        "X_degenerate": IM["degenerate_feature_names"],
+        "X_constant": IM["constant_feature_names"],
+    }
+    if key == "X1":
+        return pd.DataFrame(np.asarray(IM["X"])[:, :1], columns=IM["feature_names"][:1])
+    if key in ("spec", "spec_collinear"):
+        sf = INPUTS["spec_fixture"]
+        if key == "spec":
+            return pd.DataFrame(sf["X"], columns=sf["feature_names"])
+        return pd.DataFrame(sf["X_collinear"], columns=sf["collinear_feature_names"])
+    return pd.DataFrame(np.asarray(IM[key]), columns=names[key])
+
+
+# ---------------- 1-3, 7: coefficients, representations, predictions, collinearity
+@pytest.mark.parametrize(
+    ("block", "x_key"),
+    [("regular", "X"), ("degenerate", "X_degenerate"), ("constant", "X_constant")],
+)
+def test_representations_and_predictions_match_r(block, x_key):
+    X = _frame(x_key)
+    y = np.asarray(IM["y_regression"])
+    names = list(X.columns)
+    refs = REF["representations"][block]
+    assert [r["anchor"] for r in refs] == names
+    for i, ref in enumerate(refs):
+        others = [n for n in names if n != names[i]]
+        assert ref["features"] == others
+
+        # 1. residualization coefficients and degeneracy flags
+        r = AnchorResidualizer(anchor=names[i]).fit(X[TRAIN])
+        keep = np.arange(len(names)) != i
+        np.testing.assert_allclose(r.coef_[keep], ref["slope"], rtol=0, atol=TOL)
+        np.testing.assert_allclose(r.intercept_[keep], ref["intercept"], rtol=0, atol=TOL)
+        assert list(r.collinear_[keep]) == ref["collinear"]  # 7. exact collinearity (D3)
+        assert r.constant_anchor_ is ref["constant_anchor"]  # D1
+
+        # 2. Full / Reduced matrices: same columns, same order, same numbers
+        full_train, full_assess = r.transform(X[TRAIN]), r.transform(X[ASSESS])
+        reduced = AnchorResidualizer(anchor=names[i], drop_anchor=True).fit(X[TRAIN])
+        reduced_train, reduced_assess = reduced.transform(X[TRAIN]), reduced.transform(X[ASSESS])
+        assert list(full_train.columns) == ref["full_columns"] == names
+        assert list(reduced_train.columns) == ref["reduced_columns"] == others
+        for got, key in [
+            (full_train, "full_train"),
+            (full_assess, "full_assess"),
+            (reduced_train, "reduced_train"),
+            (reduced_assess, "reduced_assess"),
+        ]:
+            np.testing.assert_allclose(got.to_numpy(), np.asarray(ref[key]), rtol=0, atol=TOL)
+        # collinear residuals are exactly zero on both sides
+        flagged = [n for n, c in zip(others, ref["collinear"], strict=True) if c]
+        assert (full_train[flagged].to_numpy() == 0).all()
+        assert (np.asarray(ref["full_assess"])[:, [names.index(n) for n in flagged]] == 0).all()
+
+        # 3. predictions of the Full and the Reduced OLS model
+        pred_full = AliasingOLS().fit(full_train, y[TRAIN]).predict(full_assess)
+        pred_reduced = AliasingOLS().fit(reduced_train, y[TRAIN]).predict(reduced_assess)
+        np.testing.assert_allclose(pred_full, ref["pred_full"], rtol=0, atol=TOL)
+        np.testing.assert_allclose(pred_reduced, ref["pred_reduced"], rtol=0, atol=TOL)
+
+
+def test_constant_design_exercises_d1_and_d2():
+    """Sanity check of the fixture: the R reference really contains D1 and D2 cases."""
+    refs = REF["representations"]["constant"]
+    assert [r["constant_anchor"] for r in refs] == [False, False, False, False, True]
+    assert refs[4]["slope"] == [0, 0, 0, 0]  # D1: slopes are zero
+    assert refs[0]["slope"][-1] == 0 and refs[0]["intercept"][-1] == 2.5  # D2
+    assert sum(sum(r["collinear"]) for r in REF["representations"]["degenerate"]) > 0  # D3
+    assert sum(sum(r["collinear"]) for r in REF["representations"]["regular"]) == 0
+
+
+def test_null_model_matches_r():
+    """8. p = 1: the Reduced model is the null model."""
+    from sharedimp._fitting import fit_null_model
+
+    ref = REF["null_model"]
+    empty = np.empty((int(ASSESS.sum()), 0))
+    y = np.asarray(IM["y_regression"])
+    reg = fit_null_model(LinearRegression(), int(TRAIN.sum()), y[TRAIN])
+    np.testing.assert_allclose(reg.predict(empty), ref["regression_prediction"], atol=TOL)
+    yb = np.asarray(IM["y_binary"])
+    clf = fit_null_model(LogisticRegression(), int(TRAIN.sum()), yb[TRAIN])
+    assert list(clf.classes_) == ref["binary_levels"]
+    np.testing.assert_allclose(clf.predict_proba(empty), ref["binary_probabilities"], atol=TOL)
+
+
+# ----------------------------------- 4-6, 8: per-split scores, summary, defaults
+def _assert_tables_equal(res, ref, tol):
+    """Compare both result tables with the R tables, column by column."""
+    # per-split table: same row order (split-major), same columns
+    fr, rf = res.fold_results, ref["folds"]
+    assert list(fr["feature"]) == rf["feature"]
+    # the split label is 1-based in R and 0-based in Python (specification 11.2)
+    assert list(fr["split"] + 1) == rf["split"]
+    assert list(fr["n_train"]) == rf["n_train"]
+    assert list(fr["n_test"]) == rf["n_test"]
+    for col in ("score_full", "score_reduced", "importance"):
+        expected = np.array([np.nan if v is None else v for v in rf[col]], dtype=float)
+        np.testing.assert_allclose(fr[col].to_numpy(float), expected, rtol=0, atol=tol, err_msg=col)
+    assert list(fr["error"].notna()) == rf["failed"]
+
+    # summary table
+    imp, rs = res.importances, ref["summary"]
+    assert list(imp["feature"]) == rs["feature"]
+    assert list(imp["n_splits"]) == rs["n_splits"]
+    for col in ("importance", "importance_std", "score_full", "score_reduced"):
+        expected = np.array([np.nan if v is None else v for v in rs[col]], dtype=float)
+        np.testing.assert_allclose(
+            imp[col].to_numpy(float), expected, rtol=0, atol=tol, err_msg=col
+        )
+
+
 CASES = [
-    # (reference block, metric key, X key, y key, estimator factory, common metric, rtol/atol)
-    ("regression", "mse", "X", "y_regression", LinearRegression, "mse", 1e-9),
-    ("regression", "rmse", "X", "y_regression", LinearRegression, "rmse", 1e-9),
-    ("regression", "mae", "X", "y_regression", LinearRegression, "mae", 1e-9),
-    ("regression", "rsq", "X", "y_regression", LinearRegression, "rsq", 1e-9),
-    ("regression", "r2", "X", "y_regression", LinearRegression, "r2", 1e-9),
-    (
-        "regression_degenerate",
-        "mse",
-        "X_degenerate",
-        "y_regression",
-        _RankRevealingOLS,
-        "mse",
-        1e-8,
-    ),
-    ("regression_single_feature", "mse", "X1", "y_regression", LinearRegression, "mse", 1e-9),
-    ("regression_single_feature", "r2", "X1", "y_regression", LinearRegression, "r2", 1e-9),
-    ("binary", "log_loss", "X", "y_binary", _logistic, "log_loss", 1e-6),
-    ("binary", "accuracy", "X", "y_binary", _logistic, "accuracy", 1e-12),
-    ("binary", "roc_auc", "X", "y_binary", _logistic, "roc_auc", 1e-12),
-    ("binary_single_feature", "log_loss", "X1", "y_binary", _logistic, "log_loss", 1e-6),
-    ("binary_single_feature", "accuracy", "X1", "y_binary", _logistic, "accuracy", 1e-12),
-    # nnet::multinom stops at a looser optimum (BFGS, reltol 1e-8) than glm
-    ("multiclass", "log_loss", "X", "y_multiclass", _multinomial, "log_loss", 1e-4),
-    ("multiclass", "accuracy", "X", "y_multiclass", _multinomial, "accuracy", 1e-12),
-    ("multiclass", "roc_auc", "X", "y_multiclass", _multinomial, "roc_auc", 1e-12),
+    # (reference block, case, X, y, estimator factory, tolerance)
+    ("regression", "default", "X", "y_regression", LinearRegression, TOL),
+    ("regression", "mse", "X", "y_regression", LinearRegression, TOL),
+    ("regression", "rmse", "X", "y_regression", LinearRegression, TOL),
+    ("regression", "mae", "X", "y_regression", LinearRegression, TOL),
+    ("regression", "r2", "X", "y_regression", LinearRegression, TOL),
+    ("regression", "rsq", "X", "y_regression", LinearRegression, TOL),
+    ("regression_degenerate", "mse", "X_degenerate", "y_regression", AliasingOLS, TOL),
+    ("regression_single_feature", "default", "X1", "y_regression", LinearRegression, TOL),
+    ("regression_single_feature", "r2", "X1", "y_regression", LinearRegression, TOL),
+    ("binary", "default", "X", "y_binary", _logistic, LOGISTIC_TOL),
+    ("binary", "log_loss", "X", "y_binary", _logistic, LOGISTIC_TOL),
+    ("binary", "accuracy", "X", "y_binary", _logistic, TOL),
+    ("binary", "roc_auc", "X", "y_binary", _logistic, TOL),
+    ("binary_single_feature", "default", "X1", "y_binary", _logistic, LOGISTIC_TOL),
+    ("binary_single_feature", "accuracy", "X1", "y_binary", _logistic, TOL),
+    ("multiclass", "default", "X", "y_multiclass", _multinomial, MULTINOMIAL_TOL),
+    ("multiclass", "accuracy", "X", "y_multiclass", _multinomial, TOL),
+    ("multiclass", "roc_auc", "X", "y_multiclass", _multinomial, TOL),
+    ("spec_fixture", "default", "spec", "spec_y", LinearRegression, TOL),
+    ("spec_fixture_collinear", "default", "spec_collinear", "spec_y", AliasingOLS, TOL),
 ]
 
 
-def _design(key):
-    im = INPUTS["importance"]
-    if key == "X1":
-        return pd.DataFrame(np.asarray(im["X"])[:, :1], columns=im["feature_names"][:1])
-    names = im["degenerate_feature_names"] if key == "X_degenerate" else im["feature_names"]
-    return pd.DataFrame(np.asarray(im[key]), columns=names)
+def _target_and_cv(y_key):
+    if y_key == "spec_y":
+        sf = INPUTS["spec_fixture"]
+        return np.asarray(sf["y"]), PredefinedSplit(np.asarray(sf["folds"]) - 1)
+    return np.asarray(IM[y_key]), PredefinedSplit(FOLDS - 1)
 
 
 @pytest.mark.parametrize(
-    ("block", "key", "x_key", "y_key", "make", "metric", "tol"),
+    ("block", "case", "x_key", "y_key", "make", "tol"),
     CASES,
     ids=[f"{c[0]}-{c[1]}" for c in CASES],
 )
-def test_shared_importance_matches_r(block, key, x_key, y_key, make, metric, tol):
-    im = INPUTS["importance"]
-    ref = REF["importance"][block][key]
-    X = _design(x_key)
-    y = np.asarray(im[y_key])
-    cv = PredefinedSplit(np.asarray(im["folds"]) - 1)  # same explicit folds as R
-    res = shared_importance(make(), X, y, scoring=common_scorer(metric), cv=cv)
-
-    # R reports the raw metric and applies the sign afterwards; the common
-    # schema reports greater-is-better scores.
-    s = 1.0 if ref["metric_direction"] == "maximize" else -1.0
-    # The R reference commit lists per-split rows feature-major with labels
-    # "Fold<k>"; Python lists them split-major with a 0-based index. Compare
-    # by (feature, split), i.e. reorder the Python rows.
-    order = {f: k for k, f in enumerate(res.features)}
-    fr = res.fold_results.assign(_pos=lambda d: d["feature"].map(order))
-    fr = fr.sort_values(["_pos", "split"], kind="stable")
-    assert list(fr["feature"]) == ref["fold_feature"]
-    assert [f"Fold{k + 1}" for k in fr["split"]] == ref["fold_id"]
-    np.testing.assert_allclose(fr["score_full"], s * np.asarray(ref["fold_metric_full"]), atol=tol)
-    np.testing.assert_allclose(
-        fr["score_reduced"], s * np.asarray(ref["fold_metric_reduced"]), atol=tol
-    )
-    np.testing.assert_allclose(fr["importance"], ref["fold_importance"], atol=2 * tol)
-
-    assert res.features == ref["feature"]
-    np.testing.assert_allclose(res.importances["importance"], ref["importance"], atol=2 * tol)
-    np.testing.assert_allclose(res.importances["importance_std"], ref["sd"], atol=2 * tol)
-    np.testing.assert_array_equal(res.importances["n_splits"], ref["n_folds"])
-
-
-# ------------------------------------- parity fixture of the R specification
-# Deterministic fixture defined in sharedimp-r/docs/specification.md, section
-# 15.1 (working draft of 2026-11-13). The expected numbers below are the R
-# results recorded there (learner = "linear", metric = "mse"); they were
-# copied, not recomputed in Python.
-R_SPEC_SUMMARY = {
-    #        importance         importance_std     score_full           score_reduced
-    "x1": (48.3228798721808, 6.17147177856012, -0.276470061784757, -48.5993499339656),
-    "x2": (34.4600258422062, 29.5939201894648, -0.276470061784757, -34.7364959039909),
-    "x3": (45.5507348310811, 22.4063405773906, -0.276470061784757, -45.8272048928659),
-}
-R_SPEC_PER_SPLIT = {
-    "x1": [53.5652538573545, 49.8820278139317, 41.5213579452562],
-    "x2": [61.4017818839248, 39.1937200003847, 2.78457564230898],
-    "x3": [36.9725234594595, 70.9787812500000, 28.7008997837838],
-}
-
-
-def _r_spec_fixture():
-    i = np.arange(1, 13)
-    X = pd.DataFrame(
-        {
-            "x1": i.astype(float),
-            "x2": (i % 4) + 0.5 * i,
-            "x3": [2.0, 1.0, 4.0, 3.0, 6.0, 5.0, 8.0, 7.0, 10.0, 9.0, 12.0, 11.0],
+def test_shared_importance_matches_r(block, case, x_key, y_key, make, tol):
+    ref = REF["importance"][block][case]
+    y, cv = _target_and_cv(y_key)
+    # "default": neither language is told which metric to use
+    scoring = None if case == "default" else common_scorer(ref["metric"])
+    res = shared_importance(make(), _frame(x_key), y, scoring=scoring, cv=cv, on_error="error")
+    if case == "default":
+        assert (res.scoring, ref["metric"]) in {
+            ("neg_mean_squared_error", "mse"),
+            ("neg_log_loss", "log_loss"),
         }
+    assert res.n_failed == 0 and ref["n_warnings"] == 0
+    _assert_tables_equal(res, ref, tol)
+
+
+def test_default_metric_equals_the_named_common_metric_in_r_too():
+    for block, named in [("regression", "mse"), ("binary", "log_loss")]:
+        a, b = REF["importance"][block]["default"], REF["importance"][block][named]
+        assert a["summary"] == b["summary"] and a["folds"] == b["folds"]
+
+
+def test_constant_anchor_matches_r():
+    """D1/D2 end to end: one warning naming the constant anchor on both sides."""
+    ref = REF["importance"]["regression_constant"]["mse"]
+    y, cv = _target_and_cv("y_regression")
+    with pytest.warns(UserWarning, match="constant on at least one training set") as rec:
+        res = shared_importance(
+            AliasingOLS(), _frame("X_constant"), y, scoring=common_scorer("mse"), cv=cv
+        )
+    assert len(rec) == ref["n_warnings"] == 1 and "ctrain" in str(rec[0].message)
+    _assert_tables_equal(res, ref, TOL)
+
+
+def test_collinear_copy_gets_the_importance_of_its_original():
+    """7. Exact collinearity end to end, in the R numbers themselves."""
+    for block, twin, original in [
+        ("regression_degenerate", "dup", "x0"),
+        ("regression_degenerate", "affine", "x0"),
+        ("spec_fixture_collinear", "x1_dup", "x1"),
+    ]:
+        case = next(iter(REF["importance"][block].values()))
+        imp = dict(zip(case["summary"]["feature"], case["summary"]["importance"], strict=True))
+        assert imp[twin] == pytest.approx(imp[original], abs=TOL)
+
+
+# ------------------------------------------------------- 9. learner failures
+def _failure_estimators():
+    marker = IM["marker"]
+    return {
+        "fit_error": (FailsWithoutMarker(marker=marker), "y_marker", "mse", "marker row"),
+        "non_finite_predictions": (
+            NaNWithoutMarker(marker=marker),
+            "y_marker",
+            "mse",
+            "non-finite",
+        ),
+        "single_class": (DummyClassifier(strategy="prior"), "y_single_class", None, "single class"),
+    }
+
+
+@pytest.mark.parametrize("kind", ["fit_error", "non_finite_predictions", "single_class"])
+def test_learner_failures_match_r(kind):
+    estimator, y_key, metric, message = _failure_estimators()[kind]
+    ref = REF["failures"][kind]
+    y, cv = _target_and_cv(y_key)
+    scoring = None if metric is None else common_scorer(metric)
+
+    with pytest.warns(UserWarning, match="fits failed") as rec:
+        res = shared_importance(estimator, _frame("X"), y, scoring=scoring, cv=cv)
+    assert len(rec) == ref["n_warnings"] == 1  # one summary warning in both languages
+    _assert_tables_equal(res, ref, TOL)  # NaN rows, scores of the other splits, n_splits
+
+    failed = res.fold_results["error"].notna()
+    assert failed.sum() == sum(ref["folds"]["failed"]) == 4  # split 1 (R) / 0 (Python)
+    assert res.fold_results.loc[failed, "error"].str.contains(message).all()
+    assert all(
+        message.split()[0] in e
+        for e, f in zip(ref["folds"]["error"], ref["folds"]["failed"], strict=True)
+        if f
     )
-    noise = np.array([0.3, -0.2, 0.1, 0.4, -0.5, 0.2, -0.1, 0.3, -0.4, 0.1, 0.2, -0.3])
-    y = (2 * X["x1"] - X["x2"] + 0.5 * X["x3"] + noise).to_numpy()
-    cv = [(np.flatnonzero((i - 1) % 3 != s), np.flatnonzero((i - 1) % 3 == s)) for s in range(3)]
-    return X, y, cv
+    assert list(res.importances["n_splits"]) == [3, 3, 3, 3]
 
-
-def test_r_specification_parity_fixture():
-    X, y, cv = _r_spec_fixture()
-    np.testing.assert_allclose(
-        y, [1.8, 1.3, 3.6, 7.9, 9.0, 9.7, 11.4, 15.8, 17.1, 17.6, 19.7, 23.2], atol=1e-12
-    )
-    # None: the default metric (MSE for regressors) is the R default as well
-    for scoring in (None, "neg_mean_squared_error", common_scorer("mse")):
-        res = shared_importance(LinearRegression(), X, y, scoring=scoring, cv=cv)
-        imp = res.importances.set_index("feature")
-        for feature, expected in R_SPEC_SUMMARY.items():
-            got = imp.loc[feature, ["importance", "importance_std", "score_full", "score_reduced"]]
-            np.testing.assert_allclose(got.to_numpy(float), expected, rtol=0, atol=1e-8)
-            assert imp.loc[feature, "n_splits"] == 3
-            np.testing.assert_allclose(
-                res.fold_matrix().loc[feature].to_numpy(), R_SPEC_PER_SPLIT[feature], atol=1e-8
-            )
-        assert (res.fold_results["n_train"] == 8).all()
-        assert (res.fold_results["n_test"] == 4).all()
-
-
-def test_r_specification_parity_fixture_with_collinear_column():
-    """Variant of the fixture with ``x1_dup = 3 * x1 - 2`` (zero-residual rule)."""
-    X, y, cv = _r_spec_fixture()
-    X["x1_dup"] = 3 * X["x1"] - 2
-    # x1 and x1_dup are collinear with each other for every other anchor, so the
-    # learner must handle a rank-deficient design (see _RankRevealingOLS).
-    res = shared_importance(_RankRevealingOLS(), X, y, scoring="neg_mean_squared_error", cv=cv)
-    imp = res.importances.set_index("feature")["importance"]
-    for feature, expected in R_SPEC_SUMMARY.items():
-        assert imp[feature] == pytest.approx(expected[0], abs=1e-8)
-    assert imp["x1_dup"] == pytest.approx(R_SPEC_SUMMARY["x1"][0], abs=1e-8)
+    # on_error = "error" aborts in both languages
+    assert REF["failures"]["on_error_error_aborts"][kind] is True
+    with pytest.raises((RuntimeError, ValueError), match=message):
+        shared_importance(estimator, _frame("X"), y, scoring=scoring, cv=cv, on_error="error")

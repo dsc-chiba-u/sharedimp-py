@@ -56,6 +56,33 @@ def main() -> None:
     y_multi = np.array(["u", "v", "w"])[np.digitize(s, np.quantile(s, [1 / 3, 2 / 3]))]
     folds = (np.arange(m) % 4) + 1  # explicit fold labels, 1..4
 
+    # ------------------------------------------- additional designs (drawn last,
+    # so that everything above is unchanged from earlier versions of this file)
+    # Column that is constant on the training rows of split 1 (folds != 1) and
+    # varies on its assessment rows: exercises rules D1 and D2.
+    ctrain = np.where(folds == 1, rng.normal(size=m).round(4), 2.5)
+    X_constant = np.column_stack([X, ctrain])
+
+    # Learner-failure designs. MARKER is a target value that occurs once, in a
+    # row assessed in split 1; the failing learners below fail whenever it is
+    # absent from the training targets, i.e. exactly in split 1.
+    marker = 7.25
+    y_marker = y_reg.copy()
+    y_marker[0] = marker
+    assert folds[0] == 1 and np.sum(y_marker == marker) == 1
+    # Class "b" occurs only in fold 1, so the training set of split 1 has a
+    # single class.
+    y_single = np.where(folds == 1, "b", "a")
+
+    # Parity fixture of the common specification, section 15.1 (no RNG).
+    i = np.arange(1, 13)
+    spec_X = np.column_stack(
+        [i.astype(float), (i % 4) + 0.5 * i, [2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11]]
+    ).astype(float)
+    spec_noise = np.array([0.3, -0.2, 0.1, 0.4, -0.5, 0.2, -0.1, 0.3, -0.4, 0.1, 0.2, -0.3])
+    spec_y = (2 * spec_X[:, 0] - spec_X[:, 1] + 0.5 * spec_X[:, 2] + spec_noise).round(10)
+    spec_folds = ((i - 1) % 3) + 1
+
     out = {
         "metrics": {
             "regression": {"truth": truth.tolist(), "estimate": estimate.tolist()},
@@ -80,6 +107,19 @@ def main() -> None:
             "y_binary": y_bin.tolist(),
             "y_multiclass": y_multi.tolist(),
             "folds": folds.tolist(),
+            "constant_feature_names": ["x0", "x1", "x2", "x3", "ctrain"],
+            "X_constant": X_constant.tolist(),
+            "marker": marker,
+            "y_marker": y_marker.tolist(),
+            "y_single_class": y_single.tolist(),
+        },
+        "spec_fixture": {
+            "feature_names": ["x1", "x2", "x3"],
+            "collinear_feature_names": ["x1", "x2", "x3", "x1_dup"],
+            "X": spec_X.tolist(),
+            "X_collinear": np.column_stack([spec_X, 3 * spec_X[:, 0] - 2]).tolist(),
+            "y": spec_y.tolist(),
+            "folds": spec_folds.tolist(),
         },
     }
     (HERE / "inputs.json").write_text(json.dumps(out, indent=1) + "\n")

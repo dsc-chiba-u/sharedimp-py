@@ -9,15 +9,25 @@ verified by SHA-256) or read from a local checkout given by the environment
 variable ``SHAREDIMP_UMFI_PYTHON_DIR``. If neither is available the tests are
 skipped, never faked.
 
-What is and is not comparable is documented in ``docs/relation_to_umfi.md``:
+The official implementation and sharedimp differ by design (residualization
+gate, in-sample OOB vs. cross-validation, truncation, noise injection), so
+the tests are split into two groups; see also ``docs/relation_to_umfi.md``.
 
-* the linear residualization (``preprocess_lr``) is comparable exactly,
-  whenever the upstream R^2 > 0.01 gate is passed;
-* the upstream UMFI score (in-sample residualization + random-forest OOB
-  score + truncation at 0) is reproduced exactly from sharedimp's
-  representations when the same scoring rule is applied;
-* ``shared_importance`` itself estimates the same quantity out-of-sample, so
-  it can only be compared approximately.
+``TestExactAgreementExpected``
+    Conditions under which the two must agree to floating-point accuracy:
+    the linear residualization when the upstream gate (R^2 > 0.01) is passed
+    for every feature pair, the column layout of the representation (anchor
+    in its original position), and the upstream UMFI-LR score when the
+    upstream scoring rule (random-forest OOB R^2 on all rows, truncation at
+    0) is applied to sharedimp's Full/Reduced representations.
+
+``TestAgreementNotExpected``
+    Conditions under which they must *not* be expected to agree, each pinned
+    by a test that asserts the difference: the gate (upstream leaves weakly
+    correlated features untouched), truncation (upstream never returns a
+    negative importance), and the estimator (5-fold CV with fold-internal
+    residualization vs. OOB with full-data residualization), for which only a
+    loose sanity bound is checked.
 """
 
 from __future__ import annotations
@@ -140,39 +150,6 @@ def data():
     return X, y
 
 
-# ------------------------------------------------------------ residualization
-def test_residualization_matches_official_preprocess_lr(official_preprocess_lr, data):
-    X, _ = data
-    for col in X.columns:
-        # precondition: every pair passes the upstream gate (R^2 > 0.01)
-        r2 = X.corr()[col].drop(col) ** 2
-        assert (r2 > 0.01).all()
-        official = official_preprocess_lr(X.copy(), col)
-        ours = AnchorResidualizer(anchor=col).fit_transform(X)
-        assert list(official.columns) == list(ours.columns)
-        np.testing.assert_allclose(ours.to_numpy(), official.to_numpy(), rtol=0, atol=1e-12)
-        np.testing.assert_array_equal(ours[col].to_numpy(), X[col].to_numpy())
-
-
-def test_documented_difference_r2_gate(official_preprocess_lr):
-    """Upstream skips residualization when R^2 <= 0.01; sharedimp always residualizes."""
-    rng = np.random.default_rng(3)
-    n = 500
-    a = rng.normal(size=n)
-    weak = 0.05 * a + rng.normal(size=n)  # R^2 with a is about 0.0025
-    X = pd.DataFrame({"a": a, "weak": weak})
-    assert np.corrcoef(a, weak)[0, 1] ** 2 <= 0.01
-    official = official_preprocess_lr(X.copy(), "a")
-    ours = AnchorResidualizer(anchor="a").fit_transform(X)
-    np.testing.assert_array_equal(official["weak"].to_numpy(), weak)  # untouched upstream
-    slope = np.cov(a, weak, bias=True)[0, 1] / a.var()
-    manual = weak - (weak.mean() - slope * a.mean()) - slope * a
-    np.testing.assert_allclose(ours["weak"].to_numpy(), manual, atol=1e-12)
-    assert abs(np.corrcoef(a, ours["weak"])[0, 1]) < 1e-12
-    assert abs(np.corrcoef(a, official["weak"])[0, 1]) > 0.01
-
-
-# ------------------------------------------------- end-to-end, upstream estimator
 def _reference_from_sharedimp_representation(X, y, seed, n_trees):
     """Upstream scoring rule applied to sharedimp's Full/Reduced representations.
 
@@ -191,52 +168,107 @@ def _reference_from_sharedimp_representation(X, y, seed, n_trees):
     return out
 
 
-def test_upstream_umfi_lr_score_is_reproduced(official_umfi, data):
-    X, y = data
-    seed, n_trees = 2023, 100
+def _official_importance(official_umfi, X, y, seed, niter):
     np.random.seed(seed)  # noqa: NPY002
-    _, final = official_umfi(
+    avg, final = official_umfi(
         X.copy(),
         y,
         preprocessing_methods=["linear regression"],
-        niter=1,
-        n_trees=n_trees,
-        select_optimal_preprocessing=False,
-        RF=True,
-    )
-    official = final.set_index("Feature").loc[list(X.columns), "Importance"].to_numpy(float)
-    reference = _reference_from_sharedimp_representation(X, y, seed, n_trees)
-    np.testing.assert_allclose(reference, official, rtol=0, atol=1e-8)
-    assert official[0] > 0.1  # the comparison is not trivially 0 == 0
-
-
-def test_cross_validated_estimate_agrees_approximately(official_umfi, data):
-    """Out-of-sample R^2 gain (sharedimp) vs. in-sample OOB R^2 gain (upstream).
-
-    Same estimand, different estimators (5-fold CV with fold-internal
-    residualization vs. OOB with full-data residualization, truncation at 0),
-    so only approximate agreement is expected. The tolerance is deliberately
-    loose and is a sanity check, not a claim of numerical equivalence.
-    """
-    X, y = data
-    np.random.seed(7)  # noqa: NPY002
-    avg, _ = official_umfi(
-        X.copy(),
-        y,
-        preprocessing_methods=["linear regression"],
-        niter=5,
+        niter=niter,
         n_trees=100,
         select_optimal_preprocessing=False,
         RF=True,
     )
-    official = avg.set_index("Feature").loc[list(X.columns), "Importance"].to_numpy(float)
-    ours = shared_importance(
-        RandomForestRegressor(n_estimators=100),
-        X,
-        y,
-        scoring="r2",
-        cv=5,
-        random_state=7,
-    ).importances_mean
-    np.testing.assert_allclose(ours, official, atol=0.1)
-    assert list(np.argsort(-ours)[:2]) == list(np.argsort(-official)[:2])
+    table = final if niter == 1 else avg
+    return table.set_index("Feature").loc[list(X.columns), "Importance"].to_numpy(float)
+
+
+class TestExactAgreementExpected:
+    """Same rows, gate passed, upstream scoring rule: agreement to round-off."""
+
+    def test_residualization_when_the_gate_is_passed(self, official_preprocess_lr, data):
+        X, _ = data
+        for col in X.columns:
+            # precondition: every pair passes the upstream gate (R^2 > 0.01)
+            r2 = X.corr()[col].drop(col) ** 2
+            assert (r2 > 0.01).all()
+            official = official_preprocess_lr(X.copy(), col)
+            ours = AnchorResidualizer(anchor=col).fit_transform(X)
+            np.testing.assert_allclose(ours.to_numpy(), official.to_numpy(), rtol=0, atol=1e-12)
+
+    def test_representation_layout(self, official_preprocess_lr, data):
+        """Both keep every column, in the original order, with the raw anchor in place."""
+        X, _ = data
+        for col in X.columns:
+            official = official_preprocess_lr(X.copy(), col)
+            ours = AnchorResidualizer(anchor=col).fit_transform(X)
+            assert list(official.columns) == list(ours.columns) == list(X.columns)
+            np.testing.assert_array_equal(ours[col].to_numpy(), X[col].to_numpy())
+            np.testing.assert_array_equal(official[col].to_numpy(), X[col].to_numpy())
+
+    def test_upstream_score_from_sharedimp_representation(self, official_umfi, data):
+        X, y = data
+        seed = 2023
+        official = _official_importance(official_umfi, X, y, seed, niter=1)
+        reference = _reference_from_sharedimp_representation(X, y, seed, n_trees=100)
+        np.testing.assert_allclose(reference, official, rtol=0, atol=1e-8)
+        assert official[0] > 0.1  # the comparison is not trivially 0 == 0
+
+
+class TestAgreementNotExpected:
+    """Deliberate differences; each test asserts that the difference exists."""
+
+    def test_gate_upstream_skips_weakly_correlated_features(self, official_preprocess_lr):
+        """Upstream residualizes only if R^2 > 0.01; sharedimp always residualizes."""
+        rng = np.random.default_rng(3)
+        n = 500
+        a = rng.normal(size=n)
+        weak = 0.05 * a + rng.normal(size=n)  # R^2 with a is about 0.0025
+        X = pd.DataFrame({"a": a, "weak": weak})
+        assert np.corrcoef(a, weak)[0, 1] ** 2 <= 0.01
+        official = official_preprocess_lr(X.copy(), "a")
+        ours = AnchorResidualizer(anchor="a").fit_transform(X)
+        np.testing.assert_array_equal(official["weak"].to_numpy(), weak)  # untouched upstream
+        slope = np.cov(a, weak, bias=True)[0, 1] / a.var()
+        manual = weak - (weak.mean() - slope * a.mean()) - slope * a
+        np.testing.assert_allclose(ours["weak"].to_numpy(), manual, atol=1e-12)
+        assert abs(np.corrcoef(a, ours["weak"])[0, 1]) < 1e-12
+        assert abs(np.corrcoef(a, official["weak"])[0, 1]) > 0.01
+
+    def test_truncation_upstream_never_returns_negative_importance(self, official_umfi):
+        """Upstream floors scores and importances at 0; sharedimp reports them as they are.
+
+        With a response that is independent of every feature, the forests'
+        out-of-bag R^2 is negative, upstream floors it to 0 for both models
+        and reports exactly 0. sharedimp reports the (negative) scores and the
+        untruncated differences, some of which are negative.
+        """
+        rng = np.random.default_rng(8)
+        n = 150
+        X = pd.DataFrame(rng.normal(size=(n, 5)), columns=list("abcde"))
+        y = pd.Series(rng.normal(size=n), name="y")  # pure noise
+        official = _official_importance(official_umfi, X, y, seed=1, niter=1)
+        ours = shared_importance(
+            RandomForestRegressor(n_estimators=100), X, y, scoring="r2", cv=5, random_state=1
+        )
+        np.testing.assert_array_equal(official, np.zeros(5))
+        assert (ours.fold_results["score_full"] < 0).any()  # scores are not floored
+        assert (ours.importances_mean != 0).all()
+        assert (ours.importances_mean < 0).any()  # negative importance is kept
+
+    def test_cross_validation_vs_oob_agree_only_approximately(self, official_umfi, data):
+        """Out-of-sample R^2 gain (sharedimp) vs. in-sample OOB R^2 gain (upstream).
+
+        Same estimand, different estimators (5-fold CV with fold-internal
+        residualization vs. OOB with full-data residualization, truncation at
+        0). The tolerance is deliberately loose: a sanity check, not a claim of
+        numerical equivalence.
+        """
+        X, y = data
+        official = _official_importance(official_umfi, X, y, seed=7, niter=5)
+        ours = shared_importance(
+            RandomForestRegressor(n_estimators=100), X, y, scoring="r2", cv=5, random_state=7
+        ).importances_mean
+        assert not np.allclose(ours, official, atol=1e-6)  # they are not the same numbers
+        np.testing.assert_allclose(ours, official, atol=0.1)
+        assert list(np.argsort(-ours)[:2]) == list(np.argsort(-official)[:2])

@@ -266,7 +266,7 @@ def test_scoring_variants(reg_data):
 @pytest.mark.parametrize("n_jobs", [2, -1])
 def test_parallel_matches_serial(reg_data, n_jobs):
     X, y = reg_data
-    kwargs = dict(scoring="neg_root_mean_squared_error", cv=3, random_state=42, direction=True)
+    kwargs = dict(scoring="neg_root_mean_squared_error", cv=3, random_state=42)
     est = RandomForestRegressor(n_estimators=15)  # unseeded on purpose
     serial = shared_importance(est, X, y, n_jobs=1, **kwargs)
     par = shared_importance(est, X, y, n_jobs=n_jobs, **kwargs)
@@ -389,56 +389,12 @@ def test_fit_params_are_sliced_per_fold(recorder, reg_data):
             assert rec[3]["flag"] == "keep"
 
 
-# -------------------------------------------------------- direction diagnostic
-def test_direction_is_optional_and_signed(reg_data):
-    X, y = reg_data  # y = 1.5 x0 - 1.0 x2 + noise
-    off = shared_importance(LinearRegression(), X, y, cv=3, random_state=0)
-    assert "direction" not in off.importances.columns
-    assert "direction" not in off.fold_results.columns
-    on = shared_importance(LinearRegression(), X, y, cv=3, random_state=0, direction=True)
-    d = on.importances["direction"].to_numpy()
-    assert d[0] > 0.3 and d[2] < -0.3
-    assert np.all(np.abs(on.fold_results["direction"]) <= 1.0)
-    # the diagnostic never changes the importance
-    pd.testing.assert_frame_equal(off.importances, on.importances.drop(columns="direction"))
-    assert on.fold_matrix("direction").shape == (4, 3)
-
-
-def test_direction_matches_manual_spearman(reg_data):
-    from scipy.stats import spearmanr
-
-    from sharedimp import AnchorResidualizer
-
-    X, y = reg_data
-    cv = KFold(3)
-    res = shared_importance(LinearRegression(), X, y, cv=cv, direction=True, features=[2])
-    for s, (train, test) in enumerate(cv.split(X)):
-        r = AnchorResidualizer(anchor=2).fit(X[train])
-        pred = LinearRegression().fit(r.transform(X[train]), y[train]).predict(r.transform(X[test]))
-        expected = spearmanr(X[test, 2], pred)[0]
-        assert res.fold_results["direction"].iloc[s] == pytest.approx(expected, abs=1e-12)
-
-
-def test_direction_binary_and_multiclass(clf_data):
-    X, yb, ym = clf_data  # P(y=1) increases with x0 and decreases with x2
-    res = shared_importance(
-        LogisticRegression(), X, yb, scoring="neg_log_loss", cv=3, random_state=0, direction=True
-    )
-    d = res.importances["direction"].to_numpy()
-    assert d[0] > 0.3 and d[2] < -0.3
-    multi = shared_importance(
-        LogisticRegression(), X, ym, scoring="neg_log_loss", cv=3, random_state=0, direction=True
-    )
-    assert multi.importances["direction"].isna().all()  # undefined for > 2 classes
-    assert np.all(np.isfinite(multi.importances_mean))
-
-
 # ------------------------------------------------------------ error handling
 def test_error_handling(reg_data):
     X, y = reg_data
     est = LinearRegression()
-    with pytest.raises(ValueError, match="at least 2 features"):
-        shared_importance(est, X[:, :1], y)
+    with pytest.raises(ValueError, match="at least 1 feature"):
+        shared_importance(est, X[:, :0], y)
     with pytest.raises(ValueError, match="2-dimensional"):
         shared_importance(est, X[:, 0], y)
     with pytest.raises(ValueError, match="inconsistent lengths"):
@@ -479,7 +435,8 @@ def test_error_handling(reg_data):
     with pytest.raises(ValueError, match="empty"):
         shared_importance(est, X, y, features=[])
     with pytest.raises(TypeError, match="direction"):
-        shared_importance(est, X, y, direction="yes")
+        # the direction diagnostic is not part of the v0.1 API
+        shared_importance(est, X, y, direction=True)
     with pytest.raises(TypeError, match="fit_params"):
         shared_importance(est, X, y, fit_params=[1, 2])
     with pytest.raises(ValueError, match="y is required"):

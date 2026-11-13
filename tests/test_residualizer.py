@@ -149,6 +149,7 @@ def test_constant_anchor_centers_only():
     X = np.column_stack([np.full(6, 3.0), np.arange(6.0), np.arange(6.0) ** 2])
     r = AnchorResidualizer(anchor=0).fit(X)
     np.testing.assert_array_equal(r.coef_, np.zeros(3))
+    assert r.constant_anchor_
     out = r.transform(X)
     np.testing.assert_allclose(out[:, 1], X[:, 1] - X[:, 1].mean())
     assert np.all(np.isfinite(out))
@@ -159,7 +160,12 @@ def test_constant_other_feature():
     r = AnchorResidualizer(anchor=0).fit(X)
     assert r.coef_[1] == 0.0
     assert not r.collinear_[1]
-    np.testing.assert_allclose(r.transform(X)[:, 1], 0.0, atol=1e-14)
+    assert r.intercept_[1] == 7.0
+    assert np.all(r.transform(X)[:, 1] == 0.0)  # exactly, not up to round-off
+    # on rows where the feature is not constant it is only centered
+    np.testing.assert_array_equal(
+        r.transform(np.array([[1.0, 9.0], [2.0, -3.0]]))[:, 1], [2.0, -10.0]
+    )
 
 
 # ------------------------------------------------------------------ pandas / API

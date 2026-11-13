@@ -31,6 +31,7 @@ def test_estimator_receives_fold_internal_representations(recorder, reg_data):
     # per (split, anchor): fit full, predict full, fit reduced, predict reduced
     assert len(log) == len(splits) * p * 4
     k = 0
+    # tasks run split-major, feature-minor
     for train, test in splits:
         for i in range(p):
             fit_full, pred_full, fit_red, pred_red = log[k : k + 4]

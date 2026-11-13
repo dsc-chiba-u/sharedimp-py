@@ -7,13 +7,16 @@ scorer and CV splitter.
 """
 
 from ._core import shared_importance
+from ._metrics import COMMON_METRICS, common_scorer
 from ._residualizer import AnchorResidualizer
 from ._result import SharedImportanceResult
 from ._version import __version__
 
 __all__ = [
+    "COMMON_METRICS",
     "AnchorResidualizer",
     "SharedImportanceResult",
     "__version__",
+    "common_scorer",
     "shared_importance",
 ]

@@ -19,20 +19,29 @@ def _as_float_array(X: Any) -> np.ndarray:
 
 def _fit_coefficients(
     X: np.ndarray, anchor_idx: int, fit_intercept: bool, tol: float
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, bool]:
     """Simple-regression coefficients of every column on the anchor column.
 
-    Returns ``(coef, intercept, collinear)``, each of length ``n_features``. The
-    entries at ``anchor_idx`` are ``coef=0``, ``intercept=0``, ``collinear=False``
-    (the anchor itself is never residualized).
+    Returns ``(coef, intercept, collinear, constant_anchor)``. The first three
+    have length ``n_features``; their entries at ``anchor_idx`` are ``0``,
+    ``0`` and ``False`` (the anchor itself is never residualized).
     """
+    n_features = X.shape[1]
     a = X[:, anchor_idx]
+    # "Constant" means exactly constant (max == min). The test uses no
+    # arithmetic on the mean, so it cannot be fooled by a rounded mean, and it
+    # is unaffected by the location and scale of the column.
+    col_min, col_max = X.min(axis=0), X.max(axis=0)
+    constant = col_max == col_min
     if fit_intercept:
         a_mean = float(a.mean())
-        x_mean = X.mean(axis=0)
+        # For a constant column the mean is that constant, exactly.
+        x_mean = np.where(constant, col_min, X.mean(axis=0))
+        if constant[anchor_idx]:
+            a_mean = float(col_min[anchor_idx])
     else:
         a_mean = 0.0
-        x_mean = np.zeros(X.shape[1])
+        x_mean = np.zeros(n_features)
     a_c = a - a_mean
     X_c = X - x_mean
     ss_a = float(a_c @ a_c)
@@ -40,20 +49,24 @@ def _fit_coefficients(
 
     # Constant anchor within the fitting rows: the slope is not identified and
     # the minimum-norm least-squares solution (slope 0) is used.
-    coef = (a_c @ X_c) / ss_a if ss_a > 0.0 else np.zeros(X.shape[1])
+    constant_anchor = ss_a == 0.0
+    coef = np.zeros(n_features) if constant_anchor else (a_c @ X_c) / ss_a
+    if fit_intercept:
+        coef[constant] = 0.0  # a constant feature has no slope on anything
     intercept = x_mean - coef * a_mean
 
     resid = X_c - np.outer(a_c, coef)
     ss_res = np.einsum("ij,ij->j", resid, resid)
-    # A column is "collinear" with the anchor when (numerically) all of its
-    # variation is explained by the anchor. Its residual is pure floating-point
-    # noise, which is snapped to exactly zero in ``transform``.
+    # A feature is "collinear" with the anchor when (numerically) all of its
+    # variation is explained by the anchor: SS_res <= tol * SS_tot, i.e.
+    # 1 - R^2 <= tol. Its residual is pure floating-point noise, which is
+    # snapped to exactly zero in ``transform``.
     collinear = (ss_x > 0.0) & (ss_res <= tol * ss_x)
 
     coef[anchor_idx] = 0.0
     intercept[anchor_idx] = 0.0
     collinear[anchor_idx] = False
-    return coef, intercept, collinear
+    return coef, intercept, collinear, constant_anchor
 
 
 def _apply_coefficients(
@@ -102,12 +115,13 @@ class AnchorResidualizer(TransformerMixin, BaseEstimator):
         features. If ``True``, it returns the *reduced* representation: the
         residualized other features only.
     tol : float, default=1e-10
-        Relative tolerance for detecting features that are (numerically) an
-        exact affine function of the anchor in the fitting rows: feature ``j``
-        is flagged when ``SS_res_j <= tol * SS_tot_j``. Residuals of flagged
-        features are set to exactly ``0.0`` in ``transform``, so that
+        Relative tolerance of the exact-collinearity rule: feature ``j`` is
+        flagged when ``SS_res_j <= tol * SS_tot_j`` on the fitting rows (that
+        is, ``1 - R^2 <= tol``). Residuals of flagged features are set to
+        exactly ``0.0`` in ``transform``, for every row, so that
         floating-point round-off cannot leak the anchor into the reduced
-        representation. Set to ``0.0`` to disable.
+        representation. ``1e-10`` is the value fixed by the common R/Python
+        specification; set to ``0.0`` to disable the rule.
 
     Attributes
     ----------
@@ -120,7 +134,10 @@ class AnchorResidualizer(TransformerMixin, BaseEstimator):
         Intercept :math:`\hat a_j` of each regression. ``0`` at
         ``anchor_index_`` and everywhere when ``fit_intercept=False``.
     collinear_ : ndarray of bool, shape (n_features,)
-        Features flagged as exactly collinear with the anchor (see ``tol``).
+        Features flagged by the exact-collinearity rule (see ``tol``).
+    constant_anchor_ : bool
+        Whether the anchor is exactly constant in the fitting rows. All slopes
+        are then ``0``.
     n_features_in_ : int
         Number of features seen during ``fit``.
     feature_names_in_ : ndarray of str, shape (n_features_in_,)
@@ -129,14 +146,26 @@ class AnchorResidualizer(TransformerMixin, BaseEstimator):
 
     Notes
     -----
-    * If the anchor is constant in the fitting rows, the slopes are not
-      identified and are set to ``0`` (features are only centered).
-    * Unlike the reference implementations of UMFI-LR, residualization is
-      unconditional (no significance or :math:`R^2` gate) and deterministic
-      (no random-noise injection for constant columns). See
-      ``docs/relation_to_umfi.md``.
-    * Input must be numeric, dense and finite. A DataFrame in gives a
-      DataFrame out (same index, float64 columns).
+    Degenerate cases are handled by deterministic rules shared with the R
+    package (``docs/specification.md``, section 3.1):
+
+    * *Constant anchor* (``max == min`` on the fitting rows): slopes are not
+      identified and are set to ``0``; features are only centered.
+    * *Constant feature*: slope ``0`` and intercept equal to the constant, so
+      its residual is exactly ``0`` on the fitting rows.
+    * *Feature exactly collinear with the anchor* (a duplicate or any affine
+      copy): its residual is exactly ``0`` for every row, fitting or new.
+
+    All three rules are unaffected by the location and scale (units) of the
+    features and of the anchor. Flagged columns are kept (as zeros), never
+    dropped, so the number and order of columns do not depend on the data.
+
+    Unlike the reference implementations of UMFI-LR, residualization is
+    unconditional (no significance or :math:`R^2` gate) and deterministic (no
+    random-noise injection). See ``docs/relation_to_umfi.md``.
+
+    Input must be numeric, dense and finite. A DataFrame in gives a DataFrame
+    out (same index, float64 columns).
 
     Examples
     --------
@@ -212,7 +241,7 @@ class AnchorResidualizer(TransformerMixin, BaseEstimator):
         Xa = _as_float_array(X)
         self.n_features_in_ = Xa.shape[1]
         self.anchor_index_ = self._resolve_anchor(X, Xa.shape[1])
-        self.coef_, self.intercept_, self.collinear_ = _fit_coefficients(
+        self.coef_, self.intercept_, self.collinear_, self.constant_anchor_ = _fit_coefficients(
             Xa, self.anchor_index_, bool(self.fit_intercept), float(self.tol)
         )
         return self

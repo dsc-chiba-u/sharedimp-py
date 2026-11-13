@@ -6,9 +6,16 @@ from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
-from sklearn.base import clone
+from sklearn.base import clone, is_classifier
+from sklearn.dummy import DummyClassifier, DummyRegressor
 
-__all__ = ["clone_with_seed", "fit_clone", "index_rows", "slice_fit_params"]
+__all__ = [
+    "clone_with_seed",
+    "fit_clone",
+    "fit_null_model",
+    "index_rows",
+    "slice_fit_params",
+]
 
 
 def clone_with_seed(estimator: Any, seed: int | None) -> Any:
@@ -73,3 +80,34 @@ def fit_clone(
     est = clone_with_seed(estimator, seed)
     est.fit(X_train, y_train, **dict(fit_params or {}))
     return est
+
+
+def fit_null_model(
+    estimator: Any,
+    n_train: int,
+    y_train: Any,
+    *,
+    fit_params: Mapping[str, Any] | None = None,
+) -> Any:
+    """Fit the null model used when a representation has zero columns.
+
+    This happens only for the Reduced model of a single-feature ``X``. The
+    null model ignores the features:
+
+    * classifier: predicts the training class frequencies as probabilities
+      (and the most frequent class; ties go to the first class in sorted
+      order) -- ``DummyClassifier(strategy="prior")``;
+    * anything else: predicts the training mean of ``y`` --
+      ``DummyRegressor(strategy="mean")``.
+
+    Of ``fit_params`` only ``sample_weight`` is forwarded (weighted mean /
+    weighted class frequencies), mirroring a weighted fit of the Full model.
+    """
+    null = (
+        DummyClassifier(strategy="prior")
+        if is_classifier(estimator)
+        else DummyRegressor(strategy="mean")
+    )
+    weights = (fit_params or {}).get("sample_weight")
+    null.fit(np.empty((n_train, 0)), y_train, sample_weight=weights)
+    return null

@@ -1,9 +1,17 @@
-"""Optional, exploratory direction diagnostic.
+"""Experimental direction diagnostic -- NOT part of the public API in v0.1.
 
-The diagnostic describes the *sign and monotone strength* of the association
-between an anchor feature and the out-of-sample predictions of the Full model.
-It is a descriptive statistic of a fitted predictive model, **not** a causal
-effect and not an inferential quantity.
+This module is intentionally not wired into :func:`sharedimp.shared_importance`
+and is not exported. A direction diagnostic was removed from the common R/Python
+API for v0.1 because its definition is not settled: this module computes the
+Spearman correlation between the anchor and the Full model's out-of-sample
+prediction, the R package computes the Pearson correlation between the anchor
+and ``pred_full - pred_reduced``, and neither equals the direction coefficient
+proposed originally. It is kept only as a starting point for a later version
+and may change or disappear without notice.
+
+Whatever definition is adopted, such a diagnostic is a descriptive statistic of
+a fitted predictive model, **not** a causal effect and not an inferential
+quantity.
 """
 
 from __future__ import annotations

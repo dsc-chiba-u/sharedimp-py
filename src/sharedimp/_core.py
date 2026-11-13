@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numbers
+import warnings
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -11,8 +12,7 @@ import pandas as pd
 from joblib import Parallel, delayed
 from sklearn.utils import check_random_state
 
-from ._direction import direction_diagnostic, prediction_for_direction
-from ._fitting import fit_clone, index_rows, slice_fit_params
+from ._fitting import fit_clone, fit_null_model, index_rows, slice_fit_params
 from ._resampling import make_splits, resolve_cv
 from ._residualizer import AnchorResidualizer
 from ._result import FOLD_COLUMNS, SharedImportanceResult, aggregate_fold_results
@@ -58,11 +58,8 @@ def _validate_X(X: Any) -> tuple[np.ndarray, list[Any], pd.Index | None]:
         index = None
     if values.shape[0] < 2:
         raise ValueError("X must contain at least 2 samples.")
-    if values.shape[1] < 2:
-        raise ValueError(
-            "X must contain at least 2 features: the reduced model is fitted on the "
-            "residualized *other* features, which is empty with a single feature."
-        )
+    if values.shape[1] < 1:
+        raise ValueError("X must contain at least 1 feature.")
     if not np.all(np.isfinite(values)):
         raise ValueError(
             "X contains NaN or infinite values; impute or remove them before calling "
@@ -136,8 +133,7 @@ def _evaluate_anchor(
     fit_params: Mapping[str, Any] | None,
     columns: list[Any] | None,
     index: pd.Index | None,
-    direction: bool,
-) -> dict[str, float]:
+) -> dict[str, Any]:
     """Paired Full/Reduced evaluation of one anchor on one train/assessment split."""
     X_train, X_test = X[train], X[test]
     y_train, y_test = index_rows(y, train), index_rows(y, test)
@@ -166,30 +162,31 @@ def _evaluate_anchor(
     full_test_w = _wrap(full_test, columns, test_index)
     score_full = score_model(scorer, full_model, full_test_w, y_test)
 
-    reduced_model = fit_clone(
-        estimator,
-        _wrap(reduced_train, reduced_columns, train_index),
-        y_train,
-        seed=seed,
-        fit_params=params,
-    )
+    if reduced_train.shape[1] == 0:
+        # Single-feature X: the Reduced representation is empty, so the Reduced
+        # model is the null model (training mean / training class frequencies).
+        reduced_model = fit_null_model(estimator, train.size, y_train, fit_params=params)
+    else:
+        reduced_model = fit_clone(
+            estimator,
+            _wrap(reduced_train, reduced_columns, train_index),
+            y_train,
+            seed=seed,
+            fit_params=params,
+        )
     score_reduced = score_model(
         scorer, reduced_model, _wrap(reduced_test, reduced_columns, test_index), y_test
     )
 
-    out: dict[str, float] = {
+    return {
         "n_train": int(train.size),
         "n_test": int(test.size),
         "score_full": score_full,
         "score_reduced": score_reduced,
         # Scorers are "greater is better": positive <=> keeping the anchor helps.
         "importance": score_full - score_reduced,
+        "_constant_anchor": bool(residualizer.constant_anchor_),
     }
-    if direction:
-        out["direction"] = direction_diagnostic(
-            X_test[:, anchor_idx], prediction_for_direction(full_model, full_test_w)
-        )
-    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -204,7 +201,6 @@ def shared_importance(
     cv: Any = 5,
     groups: Any = None,
     features: Any = None,
-    direction: bool = False,
     fit_params: Mapping[str, Any] | None = None,
     n_jobs: int | None = None,
     random_state: int | np.random.RandomState | None = None,
@@ -219,7 +215,10 @@ def shared_importance(
        The same coefficients are applied to the **assessment** rows.
     2. Fit two clones of ``estimator`` on the training rows:
        *Full* (:math:`x_i` + residualized other features) and
-       *Reduced* (residualized other features only).
+       *Reduced* (residualized other features only). With a single feature
+       the Reduced representation is empty and the Reduced model is the null
+       model: the training mean of ``y`` (regressors) or the training class
+       frequencies (classifiers).
     3. Score both on the assessment rows with the same scorer and record
        ``importance = score_full - score_reduced``.
 
@@ -240,7 +239,7 @@ def shared_importance(
         fit and never modified; its hyperparameters are used as given (no
         tuning).
     X : pandas.DataFrame or array-like of shape (n_samples, n_features)
-        Numeric, dense, finite features; at least two columns. With a
+        Numeric, dense, finite features; at least one column. With a
         DataFrame, the models are fitted on DataFrames with the original
         column names.
     y : array-like of shape (n_samples,) or (n_samples, n_outputs)
@@ -262,13 +261,6 @@ def shared_importance(
     features : sequence of str or int, default=None
         Anchor features to evaluate (column names or positions). ``None``
         evaluates every feature. All features are always used as predictors.
-    direction : bool, default=False
-        If ``True``, also compute the exploratory direction diagnostic: the
-        Spearman rank correlation, on the assessment rows, between the anchor
-        and the Full model's prediction (``predict`` for regressors, the
-        probability of ``classes_[1]`` for binary classifiers; undefined, i.e.
-        ``nan``, for multiclass). It is descriptive only and must not be
-        interpreted as a causal effect.
     fit_params : dict, default=None
         Extra keyword arguments for ``estimator.fit``. Array-likes with
         ``n_samples`` rows (e.g. ``sample_weight``) are subset to the training
@@ -292,6 +284,14 @@ def shared_importance(
         ``result.importances`` has one row per anchor feature and
         ``result.fold_results`` one row per (split, feature).
 
+    Notes
+    -----
+    The Full representation keeps the anchor in its original column position.
+    Residuals of features that are constant, or an exact affine function of
+    the anchor, on the training rows are exactly zero (the columns are kept).
+    For results that must match the R package, use explicit splits and
+    :func:`sharedimp.common_scorer`; see ``docs/specification.md``.
+
     Examples
     --------
     >>> from sklearn.datasets import make_regression
@@ -310,8 +310,6 @@ def shared_importance(
         )
     if isinstance(estimator, type):
         raise TypeError("`estimator` must be an instance, not a class.")
-    if not isinstance(direction, (bool, np.bool_)):
-        raise TypeError("`direction` must be a bool.")
     if fit_params is not None and not isinstance(fit_params, Mapping):
         raise TypeError("`fit_params` must be a dict or None.")
 
@@ -335,6 +333,7 @@ def shared_importance(
 
     columns = names if isinstance(X, pd.DataFrame) else None
 
+    # Split-major, feature-minor: the row order of the per-split table.
     tasks = [(s, j) for s in range(len(splits)) for j in anchor_indices]
     outputs = Parallel(n_jobs=n_jobs, verbose=verbose)(
         delayed(_evaluate_anchor)(
@@ -349,18 +348,25 @@ def shared_importance(
             fit_params=fit_params,
             columns=columns,
             index=index,
-            direction=bool(direction),
         )
         for s, j in tasks
     )
 
     pos_of = {j: pos for pos, j in enumerate(anchor_indices)}
-    records = [
-        {"feature": names[j], "_feature_pos": pos_of[j], "split": s, **out}
-        for (s, j), out in zip(tasks, outputs, strict=True)
-    ]
-    fold_columns = FOLD_COLUMNS + (["direction"] if direction else [])
-    fold_df = pd.DataFrame.from_records(records, columns=[*fold_columns, "_feature_pos"])
+    constant_anchors: list[Any] = []
+    records = []
+    for (s, j), out in zip(tasks, outputs, strict=True):
+        if out.pop("_constant_anchor") and names[j] not in constant_anchors:
+            constant_anchors.append(names[j])
+        records.append({"feature": names[j], "_feature_pos": pos_of[j], "split": s, **out})
+    if constant_anchors:
+        warnings.warn(
+            "Anchor feature(s) constant on at least one training set (slopes set to zero): "
+            f"{constant_anchors!r}.",
+            UserWarning,
+            stacklevel=2,
+        )
+    fold_df = pd.DataFrame.from_records(records, columns=[*FOLD_COLUMNS, "_feature_pos"])
     feature_labels = [names[j] for j in anchor_indices]
     importances = aggregate_fold_results(fold_df, feature_labels)
     fold_df = fold_df.drop(columns="_feature_pos")

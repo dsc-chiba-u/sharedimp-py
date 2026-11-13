@@ -101,12 +101,12 @@ Where one entry is given, both stacks gave the same result.
   accepted columns is at most `1e-7` of its norm is aliased (coefficient 0),
   the rest is fitted by least squares. With it, all four designs agree with R
   to `1e-8` on both stacks. Full-rank designs keep `LinearRegression`.
-* **For the common specification (spec §8.1, §15.4):** the statement that every
-  solver which recognises the deficiency gives the same predictions holds for
-  the fitted values and for new rows that satisfy the dependency, but not in
-  the constant-anchor case; and `numpy.linalg.lstsq(rcond=1e-7)`, suggested
-  there as the Python counterpart of `lm.fit`, does not reproduce R on that
-  case. See `r_side_changes.md`.
+* **For the common specification:** these findings are incorporated in spec
+  §8.1 and §15.4 since `sharedimp-r` commit `cf2e1cc`: predictions on
+  assessment rows that leave the training dependency depend on the solver's
+  convention, recognising the rank deficiency is necessary but not sufficient
+  to reproduce `lm.fit`, and parity tests on such designs must reproduce R's
+  aliasing convention.
 
 ## Not examined
 

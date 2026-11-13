@@ -1,6 +1,6 @@
 # sharedimp-py 作業記録と TODO
 
-最終更新: 2026-11-13（R 参照値の再生成後。直前の `main` は `5277017`）
+最終更新: 2026-11-13（R/Python の仕様調整完了時点。直前の `main` は `c082026`）
 
 このファイルは作業の引き継ぎ用メモです。仕様そのものは
 `../sharedimp-r/docs/specification.md`（R/Python 共通仕様の正本）、Python 側の適合状況は
@@ -10,15 +10,15 @@
 
 | 項目 | 状態 |
 | --- | --- |
-| ブランチ | `main` = `dd0bef0`（push 済み、作業ツリーはクリーン） |
-| pytest（scikit-learn 1.9.1） | 189 passed, 1 skipped（scikit-learn 側の array-API チェック） |
-| pytest（最小依存: scikit-learn 1.3.2 / numpy 1.23.5 / pandas 1.5.3） | 178 passed |
+| ブランチ | `main`（push 済み） |
+| pytest（scikit-learn 1.9.1） | 212 passed, 1 skipped（scikit-learn 側の array-API チェック） |
+| pytest（最小依存: scikit-learn 1.3.2 / numpy 1.23.5 / pandas 1.5.3） | 201 passed |
 | ruff / mypy / build / `twine check --strict` | すべて合格 |
 | GitHub Actions `CI` | 成功（Python 3.10–3.13、macOS、Windows、最小依存、build） |
-| GitHub Actions `DockerHub/GHCR` | 成功。`latest` と `dd0bef0` を公開済み |
+| GitHub Actions `DockerHub/GHCR` | 成功。`main` への push ごとに `latest` と短縮 SHA を公開 |
 | Docker イメージ | `ghcr.io/dsc-chiba-u/sharedimp-py`、`koki/sharedimp-py`（同一 digest） |
 | PyPI | **未公開** |
-| R 側で確認した版 | `sharedimp-r` `92f9ecb`（読み取りとコピーからの実行のみ。R 側には一切書き込んでいない） |
+| R 側で確認した版 | `sharedimp-r` `cf2e1cc`（R 参照値は `92f9ecb` から生成。以降は文書のみの変更。R 側には一切書き込んでいない） |
 
 ## 2. これまでの作業
 
@@ -65,7 +65,7 @@
 - `docs/specification.md` を「R 正本へのポインタ + 適合表 + Python 固有事項 + 差異の記録」に変更。
 - Docker workflow の手動実行に `publish` 入力を追加（R 版と同じ）。
 
-### 2.5 cross-language parity の完成（本コミット）
+### 2.5 cross-language parity の完成（`98de522`〜`c082026`）
 
 - R 参照値を最新 R 版（`92f9ecb`）から再生成。`generate_r_reference.R` を新 schema に対応させた。
 - `tests/test_cross_language.py` から旧 R 実装向けの読み替え（符号反転、列の並べ替え、
@@ -85,14 +85,10 @@
       （手順は `CLAUDE.md` の "Regenerating the R reference"）。
 - [ ] R 側にも同じ `inputs.json` を読むテストがあると双方向で検証できる（未実装）。
 
-### 3.2 R 側への申し送り（R リポジトリで対応してもらう）
+### 3.2 R 側への申し送り
 
-実装の変更依頼はなし。仕様書の記述2点のみ（詳細は `docs/r_side_changes.md` §B）。
-
-- [ ] §8.1「rank 落ちを認識する solver はすべて同じ予測値になる」は、assessment 行が
-      従属関係を満たさない場合（training で定数の anchor）には成り立たない。
-- [ ] §8.1 で Python 側の対応として挙げている `numpy.linalg.lstsq(rcond=1e-7)` は、
-      その場合に R と一致しない。R の規約（従属列の係数を 0）を再現する必要がある。
+- [x] すべて解決済み。rank deficiency に関する仕様書の記述2点は R の `cf2e1cc` で反映された
+      （`docs/r_side_changes.md` に経緯を記録）。共通仕様に未解決項目はない。
 
 ### 3.3 リリースに向けて
 

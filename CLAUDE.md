@@ -36,9 +36,13 @@ Large benchmarks belong in `sharedimp-experiments`, not in this repository.
   code → test), Python-specific behaviour, recorded deviations, and what is
   open. Every intentional deviation from the common specification must be
   written there.
-* `docs/r_side_changes.md` lists what is open on the R side (as of R commit
-  `92f9ecb`: two statements of the specification about rank-deficient designs;
-  no implementation change).
+* The R/Python reconciliation is complete as of R commit `cf2e1cc`
+  (2026-11-13): no open item in the common specification, none in this
+  implementation. `docs/specification.md` §7 separates language-specific
+  differences (by design) and limits of numerical agreement (learner
+  properties) from open problems (none). `docs/r_side_changes.md` is the
+  closed record of what was raised with the R side; add a new section there
+  only if a new discrepancy is found.
 * `docs/rank_deficiency.md` records why OLS results on collinear designs depend
   on the solver. It is a learner matter: never "fix" it by changing what
   estimator the package runs for the user.
@@ -50,7 +54,8 @@ Large benchmarks belong in `sharedimp-experiments`, not in this repository.
   (`on_error="error"` stops); Docker tags `latest` + SHA on `main`,
   `X.Y.Z` + SHA on `vX.Y.Z`.
 * `tests/fixtures/cross_language/r_reference.json` was generated from R commit
-  `92f9ecb` (recorded in its `meta` block). Regenerate it whenever the R
+  `92f9ecb` (recorded in its `meta` block); R commits up to `cf2e1cc` changed
+  documentation only. Regenerate it whenever the R
   package changes numbers or tables, and only by running R — never edit it by
   hand. If R cannot be run, leave the file alone and report why.
 * `docs/relation_to_umfi.md` records what the paper and the official

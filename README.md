@@ -239,8 +239,8 @@ stochastic learners are not numerically comparable across languages.
   each section of it, Python-specific behaviour and recorded deviations.
 * [docs/rank_deficiency.md](docs/rank_deficiency.md) — what least-squares
   solvers do on collinear designs, and why that is a learner matter.
-* [docs/r_side_changes.md](docs/r_side_changes.md) — open items between the two
-  repositories.
+* [docs/r_side_changes.md](docs/r_side_changes.md) — record of the items raised
+  with the R package during the reconciliation (all resolved).
 * [docs/relation_to_umfi.md](docs/relation_to_umfi.md) — relation to the UMFI
   paper and its official implementations, differences, and parity results.
 * [examples/](examples) — runnable scripts.

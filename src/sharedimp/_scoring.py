@@ -5,12 +5,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+import numpy as np
 from sklearn.base import is_classifier
 from sklearn.metrics import check_scoring
 
 from ._metrics import common_scorer
 
-__all__ = ["resolve_scorer", "score_model"]
+__all__ = ["check_finite_predictions", "resolve_scorer", "score_model"]
 
 Scorer = Callable[[Any, Any, Any], float]
 
@@ -66,3 +67,32 @@ def score_model(scorer: Scorer, fitted: Any, X_test: Any, y_test: Any) -> float:
         raise ValueError(
             f"The scorer must return a single number, got {type(value).__name__}."
         ) from exc
+
+
+def check_finite_predictions(fitted: Any, X_test: Any) -> None:
+    """Raise ``ValueError`` if the model's assessment predictions are not finite.
+
+    The common specification counts non-finite predictions as a learner
+    failure. Scorers receive the fitted model rather than its predictions, and
+    some metrics turn a ``nan`` prediction into a ``nan`` score without
+    raising, so the predictions are inspected here, once per fitted model:
+
+    * classifiers: ``predict_proba`` if available, otherwise
+      ``decision_function``; a classifier offering neither has only labels,
+      which cannot be non-finite;
+    * everything else: ``predict``.
+
+    Non-numeric outputs are not inspected.
+    """
+    if is_classifier(fitted):
+        if hasattr(fitted, "predict_proba"):
+            pred, what = fitted.predict_proba(X_test), "class probabilities"
+        elif hasattr(fitted, "decision_function"):
+            pred, what = fitted.decision_function(X_test), "decision values"
+        else:
+            return
+    else:
+        pred, what = fitted.predict(X_test), "predictions"
+    arr = np.asarray(pred)
+    if arr.dtype.kind in "fc" and not np.all(np.isfinite(arr)):
+        raise ValueError(f"the learner returned non-finite {what}")

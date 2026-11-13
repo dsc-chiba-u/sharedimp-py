@@ -172,3 +172,96 @@ def test_fold_matrix_shows_failed_splits_as_nan(data):
         res = shared_importance(FailsWithoutMarker(), X, y, cv=KFold(3), scoring="r2")
     wide = res.fold_matrix()
     assert wide[0].isna().all() and wide[[1, 2]].notna().all().all()
+
+
+# ------------------------------------------------------ non-finite predictions
+class PredictsNonFinite(RegressorMixin, BaseEstimator):
+    """OLS whose predictions contain a non-finite value when the marker was not in training."""
+
+    def __init__(self, value: float = np.nan):
+        self.value = value
+
+    def fit(self, X, y):
+        self.poison_ = MARKER not in np.asarray(y)
+        self.model_ = LinearRegression().fit(np.asarray(X), y)
+        return self
+
+    def predict(self, X):
+        pred = self.model_.predict(np.asarray(X))
+        if self.poison_:
+            pred[0] = self.value  # a single bad prediction is enough
+        return pred
+
+
+def _silent_scorer(estimator, X, y):
+    """A scorer that turns non-finite predictions into NaN without raising."""
+    with np.errstate(invalid="ignore"):
+        return -float(np.mean((np.asarray(y) - estimator.predict(X)) ** 2))
+
+
+@pytest.mark.parametrize("value", [np.nan, np.inf, -np.inf])
+@pytest.mark.parametrize("scoring", ["silent", "common", "sklearn"])
+def test_non_finite_predictions_are_recorded_as_failures(data, value, scoring):
+    """Whatever the scorer does with them: raise (scikit-learn) or return NaN/inf."""
+    from sharedimp import common_scorer
+
+    X, y = data
+    scorer = {
+        "silent": _silent_scorer,
+        "common": common_scorer("mse"),
+        "sklearn": "neg_mean_squared_error",
+    }[scoring]
+    with pytest.warns(UserWarning, match=r"3 of 9 \(split, feature\) fits failed"):
+        res = shared_importance(PredictsNonFinite(value), X, y, cv=KFold(3), scoring=scorer)
+    fr = res.fold_results
+    failed = fr["split"] == 0
+    # the error column is filled: the failure is not a silent NaN
+    assert (
+        fr.loc[failed, "error"] == "ValueError: the learner returned non-finite predictions"
+    ).all()
+    assert fr.loc[failed, ["score_full", "score_reduced", "importance"]].isna().all().all()
+    assert fr.loc[~failed, "error"].isna().all()
+    assert np.isfinite(fr.loc[~failed, "importance"]).all()
+    assert (res.importances["n_splits"] == 2).all() and res.n_failed == 3
+    assert np.isfinite(res.importances["importance"]).all()  # inf never reaches the summary
+    with pytest.raises(ValueError, match="non-finite predictions"):
+        shared_importance(
+            PredictsNonFinite(value), X, y, cv=KFold(3), scoring=scorer, on_error="error"
+        )
+
+
+def test_non_finite_class_probabilities_are_failures():
+    from sklearn.base import ClassifierMixin
+
+    class NaNProba(ClassifierMixin, BaseEstimator):
+        def fit(self, X, y):
+            self.classes_ = np.unique(y)
+            return self
+
+        def predict_proba(self, X):
+            return np.full((len(X), len(self.classes_)), np.nan)
+
+        def predict(self, X):
+            return np.repeat(self.classes_[0], len(X))
+
+    rng = np.random.default_rng(1)
+    X = rng.normal(size=(30, 2))
+    y = np.array(["a", "b"] * 15)
+    with pytest.warns(UserWarning, match=r"6 of 6"):
+        # accuracy only needs labels, but the probabilities are still inspected
+        res = shared_importance(NaNProba(), X, y, cv=3, scoring="accuracy", random_state=0)
+    assert res.fold_results["error"].str.contains("non-finite class probabilities").all()
+    assert (res.importances["n_splits"] == 0).all()
+
+
+def test_undefined_metric_with_finite_predictions_is_not_a_failure(data):
+    """A NaN score from finite predictions (rsq of a constant prediction) has no error."""
+    from sharedimp import common_scorer
+
+    X, y = data
+    res = shared_importance(
+        LinearRegression(), X[:, [0]], y, cv=KFold(3), scoring=common_scorer("rsq")
+    )
+    assert res.n_failed == 0 and res.fold_results["error"].isna().all()
+    assert res.fold_results["score_reduced"].isna().all()  # null model: constant prediction
+    assert (res.importances["n_splits"] == 0).all()

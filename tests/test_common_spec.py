@@ -58,7 +58,7 @@ def test_full_keeps_anchor_in_original_position(recorder, small, anchor):
     shared_importance(
         recorder(), df, y, cv=KFold(2), features=[anchor], scoring="neg_mean_squared_error"
     )
-    full, reduced = recorder.log[0][1], recorder.log[2][1]
+    full, reduced = recorder.log[0][1], recorder.log[3][1]
     assert list(full.columns) == ["a", "b", "c"]  # original order, anchor in place
     expected_reduced = [c for k, c in enumerate(["a", "b", "c"]) if k != anchor]
     assert list(reduced.columns) == expected_reduced

@@ -28,14 +28,16 @@ def test_estimator_receives_fold_internal_representations(recorder, reg_data):
 
     log = recorder.log
     p = X.shape[1]
-    # per (split, anchor): fit full, predict full, fit reduced, predict reduced
-    assert len(log) == len(splits) * p * 4
+    # per (split, anchor) and model: fit, predict (finiteness check), predict (scoring)
+    assert len(log) == len(splits) * p * 6
     k = 0
     # tasks run split-major, feature-minor
     for train, test in splits:
         for i in range(p):
-            fit_full, pred_full, fit_red, pred_red = log[k : k + 4]
-            k += 4
+            fit_full, pred_full, pred_full2, fit_red, pred_red, pred_red2 = log[k : k + 6]
+            k += 6
+            np.testing.assert_array_equal(pred_full[1], pred_full2[1])
+            np.testing.assert_array_equal(pred_red[1], pred_red2[1])
             assert [fit_full[0], pred_full[0], fit_red[0], pred_red[0]] == [
                 "fit",
                 "predict",
@@ -164,7 +166,7 @@ def test_exact_duplicate_does_not_leak_into_reduced_model(recorder):
     y = a + rng.normal(size=40)
     shared_importance(recorder(), X, y, cv=KFold(4), features=[0], scoring="neg_mean_squared_error")
     reduced = [rec[1] for rec in recorder.log if rec[1].shape[1] == 2]
-    assert len(reduced) == 8  # 4 fits + 4 predicts
+    assert len(reduced) == 12  # 4 fits + 2 x 4 predicts
     for mat in reduced:
         assert np.all(mat[:, 0] == 0.0)  # residual of the duplicate: exactly zero
 
@@ -239,5 +241,5 @@ def test_dataframe_passes_named_columns_to_estimator(recorder, reg_data):
     mats = [rec[1] for rec in recorder.log]
     assert all(isinstance(m, pd.DataFrame) for m in mats)
     assert list(mats[0].columns) == ["a", "b", "c", "d"]  # full
-    assert list(mats[2].columns) == ["a", "c", "d"]  # reduced
+    assert list(mats[3].columns) == ["a", "c", "d"]  # reduced
     assert set(mats[0].index) <= set(range(100, 120))  # original index is preserved

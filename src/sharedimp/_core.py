@@ -17,7 +17,7 @@ from ._fitting import fit_clone, fit_null_model, index_rows, slice_fit_params
 from ._resampling import make_splits, resolve_cv
 from ._residualizer import AnchorResidualizer
 from ._result import FOLD_COLUMNS, SharedImportanceResult, aggregate_fold_results
-from ._scoring import Scorer, resolve_scorer, score_model
+from ._scoring import Scorer, check_finite_predictions, resolve_scorer, score_model
 
 __all__ = ["shared_importance"]
 
@@ -138,6 +138,7 @@ def _fit_and_score_pair(
         raise ValueError("the training set contains a single class")
     # Paired design: same rows, same hyperparameters, same seed for both models.
     full_model = fit_clone(estimator, full[0], y_train, seed=seed, fit_params=params)
+    check_finite_predictions(full_model, full[1])
     score_full = score_model(scorer, full_model, full[1], y_test)
 
     if reduced[0].shape[1] == 0:
@@ -146,6 +147,7 @@ def _fit_and_score_pair(
         reduced_model = fit_null_model(estimator, len(y_train), y_train, fit_params=params)
     else:
         reduced_model = fit_clone(estimator, reduced[0], y_train, seed=seed, fit_params=params)
+    check_finite_predictions(reduced_model, reduced[1])
     score_reduced = score_model(scorer, reduced_model, reduced[1], y_test)
     return score_full, score_reduced
 
@@ -306,8 +308,9 @@ def shared_importance(
         rows of each split.
     on_error : {"warn", "error"}, default="warn"
         What to do when fitting, predicting or scoring fails for one
-        (split, feature) pair -- including a classifier's training set that
-        contains a single class. ``"warn"`` records ``nan`` scores and the
+        (split, feature) pair -- including non-finite predictions on the
+        assessment rows and a classifier's training set that contains a
+        single class. ``"warn"`` records ``nan`` scores and the
         error message for that pair (column ``error`` of ``fold_results``),
         continues with the other pairs, emits one warning with the number of
         failures, and aggregates each feature over its successful splits

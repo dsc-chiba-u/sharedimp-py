@@ -100,7 +100,8 @@
       README の `pip install sharedimp` は公開後に初めて動く。
 - [ ] `pyproject.toml` / `CITATION.cff` の著者情報（所属、共著者、ORCID）を確定する。
       R 側には `CITATION.cff` が追加されたので内容を揃える。
-- [ ] バージョン確定。現在 `0.1.0` のままで、2.2 以降の変更は CHANGELOG の Unreleased にある。
+- [x] バージョン確定: 初回リリースは `0.1.0`（CHANGELOG の Unreleased を 0.1.0 にまとめた）。
+      PyPI のメタデータは `torchdecomp` に合わせた（著者・maintainer の連絡先、classifier、バッジ）。
 - [ ] 最初のリリースタグ `v0.1.0` を打つと Docker の version タグ（`0.1.0`, `0.1`）が公開される。
       タグ経由の公開はまだ一度も実行していない。
 - [ ] SoftwareX 原稿に合わせた README・docs の最終確認。

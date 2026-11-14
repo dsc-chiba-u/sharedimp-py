@@ -1,5 +1,6 @@
 # sharedimp
 
+[![PyPI version](https://badge.fury.io/py/sharedimp.svg)](https://badge.fury.io/py/sharedimp)
 [![CI](https://github.com/dsc-chiba-u/sharedimp-py/actions/workflows/ci.yml/badge.svg)](https://github.com/dsc-chiba-u/sharedimp-py/actions/workflows/ci.yml)
 [![DockerHub/GHCR](https://github.com/dsc-chiba-u/sharedimp-py/actions/workflows/build_test_push.yml/badge.svg)](https://github.com/dsc-chiba-u/sharedimp-py/actions/workflows/build_test_push.yml)
 
@@ -13,7 +14,7 @@ compatible estimator, scorer and CV splitter.
 
 > This package does **not** propose a new feature-importance method. It is a
 > software implementation of an existing one, designed to be easy to use
-> correctly. See [docs/relation_to_umfi.md](docs/relation_to_umfi.md).
+> correctly. See [docs/relation_to_umfi.md](https://github.com/dsc-chiba-u/sharedimp-py/blob/main/docs/relation_to_umfi.md).
 
 ## What it computes
 
@@ -38,7 +39,12 @@ performance. It can be negative, and negative values are reported as they are.
 ## Installation
 
 ```bash
-pip install sharedimp          # once released on PyPI
+pip install sharedimp
+```
+
+The development version can be installed from GitHub:
+
+```bash
 pip install git+https://github.com/dsc-chiba-u/sharedimp-py.git
 ```
 
@@ -228,22 +234,22 @@ knowing: iteratively fitted models agree only as far as their optimisers
 converge (multinomial logistic regression: about `3e-5`), and on rank-deficient
 designs (e.g. two features that are exact copies of each other) ordinary least
 squares is not unique, so R's `lm` and `LinearRegression` can differ — see
-[docs/rank_deficiency.md](docs/rank_deficiency.md). Random forests and other
+[docs/rank_deficiency.md](https://github.com/dsc-chiba-u/sharedimp-py/blob/main/docs/rank_deficiency.md). Random forests and other
 stochastic learners are not numerically comparable across languages.
 
 ## Documentation
 
 * The specification is shared with the R package and lives in its repository:
   [sharedimp-r/docs/specification.md](https://github.com/dsc-chiba-u/sharedimp-r/blob/main/docs/specification.md).
-* [docs/specification.md](docs/specification.md) — how this package realises
+* [docs/specification.md](https://github.com/dsc-chiba-u/sharedimp-py/blob/main/docs/specification.md) — how this package realises
   each section of it, Python-specific behaviour and recorded deviations.
-* [docs/rank_deficiency.md](docs/rank_deficiency.md) — what least-squares
+* [docs/rank_deficiency.md](https://github.com/dsc-chiba-u/sharedimp-py/blob/main/docs/rank_deficiency.md) — what least-squares
   solvers do on collinear designs, and why that is a learner matter.
-* [docs/r_side_changes.md](docs/r_side_changes.md) — record of the items raised
+* [docs/r_side_changes.md](https://github.com/dsc-chiba-u/sharedimp-py/blob/main/docs/r_side_changes.md) — record of the items raised
   with the R package during the reconciliation (all resolved).
-* [docs/relation_to_umfi.md](docs/relation_to_umfi.md) — relation to the UMFI
+* [docs/relation_to_umfi.md](https://github.com/dsc-chiba-u/sharedimp-py/blob/main/docs/relation_to_umfi.md) — relation to the UMFI
   paper and its official implementations, differences, and parity results.
-* [examples/](examples) — runnable scripts.
+* [examples/](https://github.com/dsc-chiba-u/sharedimp-py/tree/main/examples) — runnable scripts.
 
 ## Development
 
@@ -272,4 +278,4 @@ If you use this package, please cite the method:
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](https://github.com/dsc-chiba-u/sharedimp-py/blob/main/LICENSE).

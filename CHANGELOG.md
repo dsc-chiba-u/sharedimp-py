@@ -6,8 +6,11 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-Alignment with the R package (`sharedimp-r`) on a common specification
-(`docs/specification.md`, v0.2-draft).
+## [0.1.0] - 2026-11-14
+
+First release on PyPI. The entries below record the alignment with the R
+package (`sharedimp-r`) on a common specification, relative to the initial
+implementation listed at the end of this section.
 
 ### Added
 
@@ -68,11 +71,7 @@ Alignment with the R package (`sharedimp-r`) on a common specification
   columns. A direction diagnostic is not part of the common API in v0.1; the
   previous helper remains as an internal, unexported, experimental module.
 
-## [0.1.0] - 2026-11-12
-
-Initial implementation (not yet released on PyPI).
-
-### Added
+### Initial implementation (2026-11-12, not released separately)
 
 - `shared_importance()`: cross-validated UMFI-LR with fold-internal
   residualization and paired Full/Reduced evaluation for any scikit-learn

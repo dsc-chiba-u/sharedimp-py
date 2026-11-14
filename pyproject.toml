@@ -7,9 +7,10 @@ name = "sharedimp"
 dynamic = ["version"]
 description = "Cross-validated UMFI-LR (ultra-marginal feature importance with linear residualization) for scikit-learn workflows"
 readme = "README.md"
-license = { file = "LICENSE" }
+license = { text = "MIT" }
 requires-python = ">=3.10"
-authors = [{ name = "Koki Tsuyuzaki" }]
+authors = [{ name = "Koki Tsuyuzaki", email = "k.t.the-answer@hotmail.co.jp" }]
+maintainers = [{ name = "Koki Tsuyuzaki", email = "k.t.the-answer@hotmail.co.jp" }]
 keywords = [
     "feature importance",
     "UMFI",
@@ -20,8 +21,11 @@ keywords = [
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Education",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
+    "Natural Language :: English",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -29,6 +33,9 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
 ]
 dependencies = [

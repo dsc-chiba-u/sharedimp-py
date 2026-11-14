@@ -189,9 +189,16 @@ you use a newer API, either raise the minimum deliberately (and update
   modelled on is `dsc-chiba-u/fbrglm`, with these deliberate differences: no
   push from pull requests, a single build for both registries, tags from
   `docker/metadata-action`.
-* **PyPI publishing is separate.** It must live in its own workflow (none
-  exists yet) and must not be coupled to the Docker workflow in either
-  direction.
+* **PyPI publishing is separate**: `.github/workflows/publish.yml` ("PyPI").
+  It must not be coupled to the Docker workflow in either direction.
+  * push of a tag `vX.Y.Z`: build, check, test the built wheel, upload to PyPI
+    (the tag must equal `v` + the version in `_version.py`, or the job fails);
+  * manual run: the same build, uploaded to TestPyPI only;
+  * authentication is PyPI trusted publishing (OIDC, environments `pypi` /
+    `testpypi`); there is no API token and no secret. The publisher must be
+    registered on PyPI / TestPyPI by the project owner.
+  * A PyPI upload cannot be undone and a version number cannot be reused.
+    Never push a `v*` tag without the owner's explicit go-ahead.
 * Docker is not usable by the development account on this machine (no access
   to the daemon socket); verify image builds through the pull-request run of
   the workflow, and say so when a local build was not possible.

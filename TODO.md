@@ -92,7 +92,11 @@
 
 ### 3.3 リリースに向けて
 
-- [ ] **PyPI 公開用 workflow** を作る（Docker とは独立した workflow。trusted publishing を想定）。
+- [x] PyPI 公開用 workflow（`.github/workflows/publish.yml`、trusted publishing）。
+      `vX.Y.Z` タグの push で PyPI、手動実行で TestPyPI に公開する。Docker とは独立。
+- [ ] PyPI / TestPyPI で trusted publisher を登録する（owner `dsc-chiba-u`、repository
+      `sharedimp-py`、workflow `publish.yml`、environment `pypi` / `testpypi`）。
+      **未登録の間は upload が拒否される。workflow はまだ一度も実行していない。**
       README の `pip install sharedimp` は公開後に初めて動く。
 - [ ] `pyproject.toml` / `CITATION.cff` の著者情報（所属、共著者、ORCID）を確定する。
       R 側には `CITATION.cff` が追加されたので内容を揃える。

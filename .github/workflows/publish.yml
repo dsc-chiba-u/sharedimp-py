@@ -1,0 +1,96 @@
+name: PyPI
+
+# Publishes the Python package. Independent of the Docker workflow
+# (build_test_push.yml): neither waits for, nor triggers, the other.
+#
+#   * push of a tag vX.Y.Z      -> PyPI
+#   * manual run (workflow_dispatch) -> TestPyPI only
+#
+# Authentication is PyPI "trusted publishing" (OIDC): there is no API token and
+# no repository secret. PyPI and TestPyPI must each list this repository,
+# this workflow file (publish.yml) and the environment name (pypi / testpypi)
+# as a trusted publisher, otherwise the upload is rejected.
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+
+concurrency:
+  group: pypi-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and check the distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: The tag must match the package version
+        if: github.event_name == 'push'
+        run: |
+          version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/sharedimp/_version.py)
+          if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match package version ${version}"
+            exit 1
+          fi
+      - run: python -m pip install build twine
+      - run: python -m build
+      - run: twine check --strict dist/*
+      - name: Test the built wheel (not the source tree)
+        run: |
+          python -m pip install dist/*.whl "pytest>=7.4"
+          mkdir "$RUNNER_TEMP/wheeltest"
+          cp -r tests pyproject.toml "$RUNNER_TEMP/wheeltest/"
+          cd "$RUNNER_TEMP/wheeltest"
+          python -c "import sharedimp; print(sharedimp.__version__, sharedimp.__file__)"
+          python -m pytest tests -m "not parity" -p no:cacheprovider
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  testpypi:
+    name: Publish to TestPyPI
+    if: github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/sharedimp/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+
+  pypi:
+    name: Publish to PyPI
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/sharedimp/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

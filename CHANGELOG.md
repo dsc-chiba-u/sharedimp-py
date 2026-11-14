@@ -25,6 +25,8 @@ Alignment with the R package (`sharedimp-r`) on a common specification
 - `docs/specification.md` rewritten as the common R/Python specification
   (v0.2-draft), aligned with the R draft.
 - `AnchorResidualizer.constant_anchor_`.
+- A workflow that publishes the package to PyPI when a tag `vX.Y.Z` is pushed
+  (TestPyPI on a manual run), using trusted publishing.
 
 ### Changed
 

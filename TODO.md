@@ -102,6 +102,9 @@
       PyPI のメタデータは `torchdecomp` に合わせた（著者・maintainer の連絡先、classifier、バッジ）。
 - [x] 最初のリリースタグ `v0.1.0`。Docker の version タグ（`0.1.0`, `0.1`）の workflow も成功した。
 - [ ] 次のリリースでは `_version.py` と `CITATION.cff` を上げ、CHANGELOG の Unreleased を確定してからタグを打つ。
+- [x] GitHub Release `v0.1.0` と Zenodo DOI（concept: `10.5281/zenodo.24220839`、
+      0.1.0: `10.5281/zenodo.24220840`）。README のバッジと `CITATION.cff` に反映済み。
+      DOI は 0.1.0 の公開後に追加したので、PyPI の 0.1.0 のページには出ない（次の版から）。
 - [ ] SoftwareX 原稿に合わせた README・docs の最終確認。
 
 ### 3.4 検証の残り

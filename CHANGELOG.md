@@ -6,6 +6,11 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Zenodo DOIs in `README.md` and `CITATION.cff`
+  (concept DOI 10.5281/zenodo.24220839; version 0.1.0: 10.5281/zenodo.24220840).
+
 ## [0.1.0] - 2026-11-14
 
 First release on PyPI. The entries below record the alignment with the R

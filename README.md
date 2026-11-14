@@ -1,5 +1,6 @@
 # sharedimp
 
+[![DOI](https://zenodo.org/badge/1455260199.svg)](https://zenodo.org/doi/10.5281/zenodo.24220839)
 [![PyPI version](https://badge.fury.io/py/sharedimp.svg)](https://badge.fury.io/py/sharedimp)
 [![CI](https://github.com/dsc-chiba-u/sharedimp-py/actions/workflows/ci.yml/badge.svg)](https://github.com/dsc-chiba-u/sharedimp-py/actions/workflows/ci.yml)
 [![DockerHub/GHCR](https://github.com/dsc-chiba-u/sharedimp-py/actions/workflows/build_test_push.yml/badge.svg)](https://github.com/dsc-chiba-u/sharedimp-py/actions/workflows/build_test_push.yml)
@@ -275,6 +276,11 @@ If you use this package, please cite the method:
   publisher = {PMLR}
 }
 ```
+
+The software itself is archived on Zenodo. To refer to the implementation, use
+[10.5281/zenodo.24220839](https://doi.org/10.5281/zenodo.24220839) (all
+versions) or the DOI of the version you used
+(0.1.0: [10.5281/zenodo.24220840](https://doi.org/10.5281/zenodo.24220840)).
 
 ## License
 

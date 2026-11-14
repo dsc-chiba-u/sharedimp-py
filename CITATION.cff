@@ -6,6 +6,14 @@ version: 0.1.0
 date-released: 2026-11-14
 license: MIT
 repository-code: "https://github.com/dsc-chiba-u/sharedimp-py"
+doi: 10.5281/zenodo.24220839
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.24220839
+    description: "Concept DOI: all versions (resolves to the latest)"
+  - type: doi
+    value: 10.5281/zenodo.24220840
+    description: "Version 0.1.0"
 authors:
   - family-names: Tsuyuzaki
     given-names: Koki

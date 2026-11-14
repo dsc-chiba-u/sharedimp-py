@@ -17,7 +17,7 @@
 | GitHub Actions `CI` | 成功（Python 3.10–3.13、macOS、Windows、最小依存、build） |
 | GitHub Actions `DockerHub/GHCR` | 成功。`main` への push ごとに `latest` と短縮 SHA を公開 |
 | Docker イメージ | `ghcr.io/dsc-chiba-u/sharedimp-py`、`koki/sharedimp-py`（同一 digest） |
-| PyPI | **未公開** |
+| PyPI | `sharedimp` 0.1.0 を公開済み（2026-11-14、タグ `v0.1.0`、trusted publishing）。新しい環境で `pip install sharedimp==0.1.0` と実行を確認 |
 | R 側で確認した版 | `sharedimp-r` `cf2e1cc`（R 参照値は `92f9ecb` から生成。以降は文書のみの変更。R 側には一切書き込んでいない） |
 
 ## 2. これまでの作業
@@ -94,16 +94,14 @@
 
 - [x] PyPI 公開用 workflow（`.github/workflows/publish.yml`、trusted publishing）。
       `vX.Y.Z` タグの push で PyPI、手動実行で TestPyPI に公開する。Docker とは独立。
-- [ ] PyPI / TestPyPI で trusted publisher を登録する（owner `dsc-chiba-u`、repository
-      `sharedimp-py`、workflow `publish.yml`、environment `pypi` / `testpypi`）。
-      **未登録の間は upload が拒否される。workflow はまだ一度も実行していない。**
-      README の `pip install sharedimp` は公開後に初めて動く。
+- [x] PyPI の trusted publisher を登録し、`v0.1.0` を公開した（2026-11-14）。
+      TestPyPI は未登録で、手動実行（TestPyPI 向け）は一度も試していない。
 - [ ] `pyproject.toml` / `CITATION.cff` の著者情報（所属、共著者、ORCID）を確定する。
       R 側には `CITATION.cff` が追加されたので内容を揃える。
 - [x] バージョン確定: 初回リリースは `0.1.0`（CHANGELOG の Unreleased を 0.1.0 にまとめた）。
       PyPI のメタデータは `torchdecomp` に合わせた（著者・maintainer の連絡先、classifier、バッジ）。
-- [ ] 最初のリリースタグ `v0.1.0` を打つと Docker の version タグ（`0.1.0`, `0.1`）が公開される。
-      タグ経由の公開はまだ一度も実行していない。
+- [x] 最初のリリースタグ `v0.1.0`。Docker の version タグ（`0.1.0`, `0.1`）の workflow も成功した。
+- [ ] 次のリリースでは `_version.py` と `CITATION.cff` を上げ、CHANGELOG の Unreleased を確定してからタグを打つ。
 - [ ] SoftwareX 原稿に合わせた README・docs の最終確認。
 
 ### 3.4 検証の残り
